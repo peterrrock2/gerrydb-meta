@@ -325,6 +325,7 @@ def render_view(
             )
             raise ex
 
+    log.debug("Returning GPKG response")
     return FileResponse(
         gpkg_path,
         media_type=GPKG_MEDIA_TYPE,

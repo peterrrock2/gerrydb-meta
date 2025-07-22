@@ -191,7 +191,7 @@ def __validate_forkability(
                 status_code=HTTPStatus.CONFLICT,
                 detail=(
                     f"Cannot fork data from layer '{source_layer}' in '{source_namespace}' "
-                    f"to layer '{target_layer}' in '{target_namespace}' because some "
+                    f"to layer '{target_layer}' in '{target_namespace}' because "
                     f"no geometries are present in the target namespace/layer and the parameter "
                     f"`allow_extra_source_geos` was not passed as `True`."
                 ),

@@ -520,7 +520,7 @@ class NamespacedObjectApi:
         if obj is None:
             raise HTTPException(
                 status_code=HTTPStatus.NOT_FOUND,
-                detail=f"{self.obj_name_singular} not found in namespace.",
+                detail=f"{self.obj_name_singular} '{path}' not found in namespace.",
             )
         return obj
 
