@@ -15,6 +15,7 @@ from sqlalchemy import (
     label,
     or_,
     select,
+    exists,
     union,
     bindparam,
 )
@@ -156,6 +157,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         valid_at: datetime,
         template_version_id: int,
     ):
+        log.debug("TOP OF GET_ALL_SET_COL_IDS")
         col_query = (
             db.query(models.GeoSetVersion.set_version_id, models.ColumnRef.path)
             .select_from(models.GeoSetVersion)
@@ -178,19 +180,8 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 models.Geography.geo_id == models.GeoSetMember.geo_id,
             )
             .join(
-                models.ColumnValue,
-                models.Geography.geo_id == models.ColumnValue.geo_id,
-            )
-            .filter(
-                models.ColumnValue.valid_from <= valid_at,
-                or_(
-                    models.ColumnValue.valid_to.is_(None),
-                    models.ColumnValue.valid_to >= valid_at,
-                ),
-            )
-            .join(
                 models.ColumnRef,
-                models.ColumnRef.col_id == models.ColumnValue.col_id,
+                models.ColumnRef.namespace_id == models.Geography.namespace_id,
             )
             .join(
                 models.ViewTemplateColumnMember,
@@ -226,19 +217,8 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 models.Geography.geo_id == models.GeoSetMember.geo_id,
             )
             .join(
-                models.ColumnValue,
-                models.Geography.geo_id == models.ColumnValue.geo_id,
-            )
-            .filter(
-                models.ColumnValue.valid_from <= valid_at,
-                or_(
-                    models.ColumnValue.valid_to.is_(None),
-                    models.ColumnValue.valid_to >= valid_at,
-                ),
-            )
-            .join(
                 models.ColumnRef,
-                models.ColumnRef.col_id == models.ColumnValue.col_id,
+                models.ColumnRef.namespace_id == models.Geography.namespace_id,
             )
             .join(
                 models.ColumnSetMember,
@@ -316,6 +296,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
             .first()
         )
+        log.debug("curr_ns_query return: %s", curr_ns_query)
 
         if curr_ns_query is None:
             raise CreateValueError(
@@ -666,6 +647,183 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             .first()
         )
 
+    # def render(self, db: Session, *, view: models.View) -> ViewRenderContext:
+    #     """Generates queries to retrieve view data.
+
+    #     Used for bulk exports via `ogr2ogr`.
+    #     """
+    #     log.debug("TOP OF CR RENDER")
+    #     columns = _view_columns(db, view.template_version_id)
+
+    #     view_set_version_ids = [
+    #         item[0]
+    #         for item in (
+    #             db.query(models.ViewGeoSetVersions.set_version_id)
+    #             .filter(models.ViewGeoSetVersions.view_id == view.view_id)
+    #             .distinct()
+    #             .all()
+    #         )
+    #     ]
+
+    #     members_sub = (
+    #         select(
+    #             models.GeoSetMember.geo_id,
+    #         )
+    #         .where(models.GeoSetMember.set_version_id.in_(view_set_version_ids))
+    #         .distinct()
+    #         .subquery("members_sub")
+    #     )
+    #     geo_sub = (
+    #         select(models.Geography.geo_id, models.Geography.path)
+    #         .distinct()
+    #         .subquery("geo_sub")
+    #     )
+
+    #     agg_selects = []
+    #     column_labels = []
+    #     col_ids = []
+    #     for _, col in columns.items():
+    #         agg_selects.append(
+    #             func.max(column(COLUMN_TYPE_TO_VALUE_COLUMN[col.type]))
+    #             .filter(models.ColumnValue.col_id == col.col_id)
+    #             .label(col.canonical_ref.path)
+    #         )
+    #         column_labels.append(column(col.canonical_ref.path))
+    #         col_ids.append(col.col_id)
+
+    #     column_sub = (
+    #         select(models.Geography.path, *agg_selects)
+    #         .select_from(models.Geography)
+    #         .join(members_sub, members_sub.c.geo_id == models.Geography.geo_id)
+    #         .join(models.ColumnValue, models.ColumnValue.geo_id == members_sub.c.geo_id)
+    #         .where(
+    #             models.ColumnValue.col_id.in_(col_ids),
+    #             models.ColumnValue.valid_from <= view.at,
+    #             or_(
+    #                 models.ColumnValue.valid_to.is_(None),
+    #                 models.ColumnValue.valid_to >= view.at,
+    #             ),
+    #         )
+    #         .group_by(models.Geography.path)
+    #         .subquery("column_value")
+    #     )
+
+    #     timestamp_clauses = [
+    #         models.GeoVersion.valid_from <= view.at,
+    #         or_(
+    #             models.GeoVersion.valid_to.is_(None),
+    #             models.GeoVersion.valid_to >= view.at,
+    #         ),
+    #     ]
+
+    #     geo_query = (
+    #         select(
+    #             geo_sub.c.path,
+    #             models.GeoBin.geography,
+    #             *column_labels,
+    #         )
+    #         .select_from(models.GeoVersion)
+    #         .join(
+    #             members_sub,
+    #             members_sub.c.geo_id == models.GeoVersion.geo_id,
+    #         )
+    #         .join(geo_sub, geo_sub.c.geo_id == models.GeoVersion.geo_id)
+    #         .join(
+    #             models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id
+    #         )
+    #     )
+
+    #     geo_query = geo_query.join(column_sub, column_sub.c.path == geo_sub.c.path)
+    #     geo_query = geo_query.distinct().where(*timestamp_clauses)
+
+    #     log.debug(
+    #         "GEO QUERY: %s",
+    #         str(
+    #             geo_query.compile(
+    #                 dialect=postgresql.dialect(),
+    #                 compile_kwargs={"literal_binds": True},
+    #             )
+    #         ),
+    #     )
+
+    #     geo_id_query = (
+    #         select(models.Geography.geo_id)
+    #         .select_from(models.Geography)
+    #         .join(
+    #             models.GeoSetMember,
+    #             models.Geography.geo_id == models.GeoSetMember.geo_id,
+    #         )
+    #         .join(
+    #             models.GeoSetVersion,
+    #             models.GeoSetMember.set_version_id
+    #             == models.GeoSetVersion.set_version_id,
+    #         )
+    #         .where(models.GeoSetVersion.set_version_id.in_(view_set_version_ids))
+    #         .distinct()
+    #         .subquery("geo_id_query")
+    #     )
+
+    #     internal_point_query = (
+    #         select(models.Geography.path, models.GeoBin.internal_point)
+    #         .select_from(models.Geography)
+    #         .join(
+    #             models.GeoVersion, models.Geography.geo_id == models.GeoVersion.geo_id
+    #         )
+    #         .join(
+    #             models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id
+    #         )
+    #         .where(exists().where(geo_id_query.c.geo_id == models.Geography.geo_id))
+    #         .where(*timestamp_clauses)
+    #         .distinct()
+    #     )
+
+    #     plans, plan_labels, plan_assignments = self._plans(db, view)
+    #     geo_meta_ids, geo_meta = self._geo_meta(db, view)
+    #     geo_valid_from_dates = self._geo_valid_dates(db, view)
+
+    #     # Query generation: substitute in literals and remove the
+    #     # ST_AsBinary() calls added by GeoAlchemy2.
+    #     full_geo_query = re.sub(
+    #         _ST_ASBINARY_REGEX,
+    #         r"\1",
+    #         str(
+    #             geo_query.compile(
+    #                 dialect=postgresql.dialect(),
+    #                 compile_kwargs={"literal_binds": True},
+    #             )
+    #         ),
+    #     )
+
+    #     log.debug("The new geo query is %s", full_geo_query)
+
+    #     full_internal_point_query = re.sub(
+    #         _ST_ASBINARY_REGEX,
+    #         r"\1",
+    #         str(
+    #             internal_point_query.compile(
+    #                 dialect=postgresql.dialect(),
+    #                 compile_kwargs={"literal_binds": True},
+    #             )
+    #         ),
+    #     )
+
+    #     log.debug("The new internal point query is %s", full_internal_point_query)
+
+    #     ret = ViewRenderContext(
+    #         view=view,
+    #         columns=columns,
+    #         plans=plans,
+    #         plan_labels=plan_labels,
+    #         plan_assignments=plan_assignments,
+    #         graph_edges=self._graph_edges(db, view),
+    #         geo_meta=geo_meta,
+    #         geo_meta_ids=geo_meta_ids,
+    #         geo_valid_from_dates=geo_valid_from_dates,
+    #         geo_query=full_geo_query,
+    #         internal_point_query=full_internal_point_query,
+    #     )
+    #     return ret
+
     def render(self, db: Session, *, view: models.View) -> ViewRenderContext:
         """Generates queries to retrieve view data.
 
@@ -674,6 +832,8 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         log.debug("TOP OF CR RENDER")
         columns = _view_columns(db, view.template_version_id)
 
+        # Need this to be able to get the geo_ids from multiple namespaces
+        # The associated geometries are guaranteed to be compatible
         view_set_version_ids = [
             item[0]
             for item in (
@@ -684,49 +844,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
         ]
 
-        members_sub = (
-            select(
-                models.GeoSetMember.geo_id,
-            )
-            .where(models.GeoSetMember.set_version_id.in_(view_set_version_ids))
-            .distinct()
-            .subquery("members_sub")
-        )
-        geo_sub = (
-            select(models.Geography.geo_id, models.Geography.path)
-            .distinct()
-            .subquery("geo_sub")
-        )
-
-        agg_selects = []
-        column_labels = []
-        col_ids = []
-        for _, col in columns.items():
-            agg_selects.append(
-                func.max(column(COLUMN_TYPE_TO_VALUE_COLUMN[col.type]))
-                .filter(models.ColumnValue.col_id == col.col_id)
-                .label(col.canonical_ref.path)
-            )
-            column_labels.append(column(col.canonical_ref.path))
-            col_ids.append(col.col_id)
-
-        column_sub = (
-            select(models.Geography.path, *agg_selects)
-            .select_from(models.ColumnValue)
-            .join(
-                models.Geography, models.ColumnValue.geo_id == models.Geography.geo_id
-            )
-            .where(
-                models.ColumnValue.col_id.in_(col_ids),
-                models.ColumnValue.valid_from <= view.at,
-                or_(
-                    models.ColumnValue.valid_to.is_(None),
-                    models.ColumnValue.valid_to >= view.at,
-                ),
-            )
-            .group_by(models.Geography.path)
-            .subquery("column_value")
-        )
+        col_ids = list([c.col_id for c in columns.values()])
 
         timestamp_clauses = [
             models.GeoVersion.valid_from <= view.at,
@@ -736,42 +854,86 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             ),
         ]
 
-        geo_query = (
-            select(
-                geo_sub.c.path,
-                models.GeoBin.geography,
-                *column_labels,
-            )
-            .select_from(models.GeoVersion)
+        geo_id_query = (
+            select(models.Geography.geo_id)
+            .select_from(models.Geography)
             .join(
-                members_sub,
-                members_sub.c.geo_id == models.GeoVersion.geo_id,
+                models.GeoSetMember,
+                models.Geography.geo_id == models.GeoSetMember.geo_id,
             )
-            .join(geo_sub, geo_sub.c.geo_id == models.GeoVersion.geo_id)
             .join(
-                models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id
+                models.GeoSetVersion,
+                models.GeoSetMember.set_version_id
+                == models.GeoSetVersion.set_version_id,
             )
+            .where(models.GeoSetVersion.set_version_id.in_(view_set_version_ids))
+            .distinct()
+            .subquery("geo_id_query")
         )
 
-        geo_query = geo_query.join(column_sub, column_sub.c.path == geo_sub.c.path)
-        geo_query = geo_query.distinct().where(*timestamp_clauses)
+        col_table_sub = (
+            select(models.ColumnValue)
+            .select_from(models.ColumnValue)
+            .where(models.ColumnValue.col_id.in_(col_ids))
+            .where(exists().where(geo_id_query.c.geo_id == models.ColumnValue.geo_id))
+            .where(
+                models.ColumnValue.col_id.in_(col_ids),
+                models.ColumnValue.valid_from <= view.at,
+                or_(
+                    models.ColumnValue.valid_to.is_(None),
+                    models.ColumnValue.valid_to >= view.at,
+                ),
+            )
+            .distinct()
+            .subquery("col_table_sub")
+        )
 
-        internal_point_query = (
+        agg_selects = []
+        column_labels = []
+        for _, col in columns.items():
+            agg_selects.append(
+                func.max(column(COLUMN_TYPE_TO_VALUE_COLUMN[col.type]))
+                .filter(col_table_sub.c.col_id == col.col_id)
+                .label(col.canonical_ref.path)
+            )
+            column_labels.append(column(col.canonical_ref.path))
+
+        geo_sub = (
             select(
-                geo_sub.c.path,
-                models.GeoBin.internal_point,
+                models.Geography.geo_id, models.Geography.path, models.GeoBin.geography
             )
-            .select_from(models.GeoVersion)
+            .select_from(models.Geography)
             .join(
-                members_sub,
-                members_sub.c.geo_id == models.GeoVersion.geo_id,
+                models.GeoVersion, models.Geography.geo_id == models.GeoVersion.geo_id
             )
-            .join(geo_sub, geo_sub.c.geo_id == models.GeoVersion.geo_id)
             .join(
                 models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id
             )
-            .distinct()
+            .where(exists().where(geo_id_query.c.geo_id == models.Geography.geo_id))
             .where(*timestamp_clauses)
+            .subquery("geo_sub")
+        )
+
+        geo_query = (
+            select(geo_sub.c.path, geo_sub.c.geography, *agg_selects)
+            .select_from(col_table_sub)
+            .join(geo_sub, geo_sub.c.geo_id == col_table_sub.c.geo_id)
+            .group_by(geo_sub.c.path, geo_sub.c.geography)
+            .distinct()
+        )
+
+        internal_point_query = (
+            select(models.Geography.path, models.GeoBin.internal_point)
+            .select_from(models.Geography)
+            .join(
+                models.GeoVersion, models.Geography.geo_id == models.GeoVersion.geo_id
+            )
+            .join(
+                models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id
+            )
+            .where(exists().where(geo_id_query.c.geo_id == models.Geography.geo_id))
+            .where(*timestamp_clauses)
+            .distinct()
         )
 
         plans, plan_labels, plan_assignments = self._plans(db, view)
@@ -805,6 +967,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         )
 
         log.debug("The new internal point query is %s", full_internal_point_query)
+
         ret = ViewRenderContext(
             view=view,
             columns=columns,
