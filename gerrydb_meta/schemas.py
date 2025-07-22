@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Any
-from typing import Annotated, Optional, Mapping
+from typing import Annotated, Optional, Mapping, Union
 from uuid import UUID
 from pydantic import (
     AnyUrl,
@@ -26,7 +26,7 @@ UserEmail = Annotated[
 GerryPath = Annotated[
     str,
     Field(
-        pattern=r"^/?[a-z0-9][a-z0-9-_.]+(?:/[a-z0-9][a-z0-9-_.]+){0,1}$",
+        pattern=r"^/?[a-z0-9][a-z0-9-_.:]+(?:/[a-z0-9][a-z0-9-_.:]+){0,1}$",
         max_length=255,
         min_length=2,
     ),
@@ -36,7 +36,7 @@ GerryPath = Annotated[
 NamespacedGerryPath = Annotated[
     str,
     Field(
-        pattern=r"^/?[a-z0-9][a-z0-9-_.]+(?:/[a-z0-9][a-z0-9-_.]+){0,2}$",
+        pattern=r"^/?[a-z0-9][a-z0-9-_.:]+(?:/[a-z0-9][a-z0-9-_.:]+){0,2}$",
         max_length=255,
         min_length=2,
     ),
@@ -46,8 +46,8 @@ NamespacedGerryPath = Annotated[
 NamespacedGerryGeoPath = Annotated[
     str,
     Field(
-        pattern=r"^/?[a-z0-9][a-z0-9-_.]+(?:/[a-z0-9][a-z0-9-_.]+){0,1}"
-        r"(?:/[a-zA-Z0-9][a-zA-Z0-9-_.]+){0,1}$",
+        pattern=r"^/?[a-z0-9][a-z0-9-_.:]+(?:/[a-z0-9][a-z0-9-_.:]+){0,1}"
+        r"(?:/[a-zA-Z0-9][a-zA-Z0-9-_.:]+){0,1}$",
         max_length=255,
         min_length=2,
     ),
@@ -56,7 +56,7 @@ NamespacedGerryGeoPath = Annotated[
 NameStr = Annotated[
     str,
     Field(
-        pattern=r"^[a-z0-9][a-z0-9-_.]+$",
+        pattern=r"^[a-z0-9][a-z0-9-_.:]+$",
         max_length=100,
         min_length=2,
     ),
@@ -64,7 +64,7 @@ NameStr = Annotated[
 # Capital letters allowed because some vtds suck
 GeoNameStr = Annotated[
     str,
-    Field(pattern=r"^[a-z0-9][a-zA-Z0-9-_.]+$", max_length=100, min_length=2),
+    Field(pattern=r"^[a-z0-9][a-zA-Z0-9-_.:]+$", max_length=100, min_length=2),
 ]
 Description = Optional[
     Annotated[
@@ -235,7 +235,7 @@ class Column(ColumnBase):
 class ColumnValue(BaseModel):
     """Value of a column for a geography."""
 
-    path: NamespacedGerryPath
+    path: GeoNameStr
     value: Any
 
 
@@ -366,7 +366,7 @@ class GeographyMeta(BaseModel):
 class GeoSetCreate(BaseModel):
     """Paths to geographies in a `GeoSet`."""
 
-    paths: list[NamespacedGerryGeoPath]
+    paths: list[GeoNameStr | NamespacedGerryGeoPath]
 
 
 class ColumnSetBase(BaseModel):
@@ -465,7 +465,11 @@ class GraphBase(BaseModel):
     proj: ShortStr = None
 
 
-WeightedEdge = tuple[NamespacedGerryPath, NamespacedGerryPath, Optional[dict]]
+WeightedEdge = tuple[
+    Union[NamespacedGerryGeoPath, GeoNameStr],
+    Union[NamespacedGerryGeoPath, GeoNameStr],
+    Optional[dict],
+]
 
 
 class GraphCreate(GraphBase):
