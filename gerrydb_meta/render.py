@@ -406,6 +406,23 @@ def __insert_geopackage_geometries(
         *proj_args,
     ]
 
+    # view_name = "my_materialized_geo_view"
+    # view_sql_path = Path("create_geo_view.sql")
+
+    # with open(view_sql_path, "w") as f:
+    #     f.write(f"CREATE OR REPLACE VIEW {view_name} AS\n{context.geo_query};\n")
+
+    # log.debug("View SQL written to %s", view_sql_path)
+    # subprocess.run(
+    #     [
+    #         "psql",
+    #         db_config.replace("PG:", ""),
+    #         "-f",
+    #         str(view_sql_path),
+    #     ],
+    #     check=True,
+    # )
+
     subprocess_command_list = [
         "ogr2ogr",
         *base_args,

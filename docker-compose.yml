@@ -1,6 +1,7 @@
 version: "3.9"
 services:
   db:
+    platform: linux/amd64
     image: postgis/postgis
     ports:
       - "54320:5432"
@@ -15,9 +16,10 @@ services:
           memory: 16g
         reservations:
           memory: 8g
-    shm_size: '16gb'
+    shm_size: "16gb"
 
   test-db:
+    platform: linux/amd64
     image: postgis/postgis
     ports:
       - "54321:5432"
@@ -31,12 +33,11 @@ services:
           memory: 16g
         reservations:
           memory: 8g
-    shm_size: '16gb'
+    shm_size: "16gb"
 
 volumes:
   db_data:
     external: true
+    name: db_data
   test_db_data:
     external: false
-
- 

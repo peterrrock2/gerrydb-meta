@@ -875,9 +875,8 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             select(models.ColumnValue)
             .select_from(models.ColumnValue)
             .where(models.ColumnValue.col_id.in_(col_ids))
-            .where(exists().where(geo_id_query.c.geo_id == models.ColumnValue.geo_id))
+            .where(models.ColumnValue.geo_id.in_(select(geo_id_query.c.geo_id)))
             .where(
-                models.ColumnValue.col_id.in_(col_ids),
                 models.ColumnValue.valid_from <= view.at,
                 or_(
                     models.ColumnValue.valid_to.is_(None),
@@ -909,7 +908,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             .join(
                 models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id
             )
-            .where(exists().where(geo_id_query.c.geo_id == models.Geography.geo_id))
+            .where(models.Geography.geo_id.in_(select(geo_id_query.c.geo_id)))
             .where(*timestamp_clauses)
             .subquery("geo_sub")
         )
@@ -931,7 +930,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             .join(
                 models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id
             )
-            .where(exists().where(geo_id_query.c.geo_id == models.Geography.geo_id))
+            .where(models.Geography.geo_id.in_(select(geo_id_query.c.geo_id)))
             .where(*timestamp_clauses)
             .distinct()
         )
