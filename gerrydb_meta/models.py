@@ -338,6 +338,7 @@ class GeoSetVersion(Base):
 
 class GeoSetMember(Base):
     __tablename__ = "geo_set_member"
+    __table_args__ = (Index("ix_geo_set_member_geo_id_set_version_id", "geo_id", "set_version_id"),)
 
     set_version_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("geo_set_version.set_version_id"), primary_key=True
@@ -395,6 +396,10 @@ class GeoBin(Base):
 
 class GeoVersion(Base):
     __tablename__ = "geo_version"
+    __table_args__ = (
+        Index("ix_geo_version_geo_id_valid_from", "geo_id", "valid_from"),
+        Index("ix_geo_version_geo_id_valid_to", "geo_id", "valid_to"),
+    )
 
     import_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("geo_import.import_id"), primary_key=True
@@ -633,6 +638,8 @@ class ColumnValue(Base):
     __tablename__ = "column_value"
     __table_args__ = (
         UniqueConstraint("col_id", "geo_id", "valid_from"),
+        Index("ix_column_value_geo_id_valid_from", "geo_id", "valid_from"),
+        Index("ix_column_value_geo_id_valid_to", "geo_id", "valid_to"),
         {"postgresql_partition_by": "LIST (col_id)"},
     )
 

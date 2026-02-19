@@ -824,6 +824,18 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
     #     )
     #     return ret
 
+    def _view_set_version_ids(self, db: Session, view_id: int) -> list[int]:
+        """Gets all geography-set versions associated with a view."""
+        return [
+            item[0]
+            for item in (
+                db.query(models.ViewGeoSetVersions.set_version_id)
+                .filter(models.ViewGeoSetVersions.view_id == view_id)
+                .distinct()
+                .all()
+            )
+        ]
+
     def render(self, db: Session, *, view: models.View) -> ViewRenderContext:
         """Generates queries to retrieve view data.
 
@@ -831,48 +843,29 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         """
         log.debug("TOP OF CR RENDER")
         columns = _view_columns(db, view.template_version_id)
-
-        # Need this to be able to get the geo_ids from multiple namespaces
-        # The associated geometries are guaranteed to be compatible
-        view_set_version_ids = [
-            item[0]
-            for item in (
-                db.query(models.ViewGeoSetVersions.set_version_id)
-                .filter(models.ViewGeoSetVersions.view_id == view.view_id)
-                .distinct()
-                .all()
-            )
-        ]
-
-        col_ids = list([c.col_id for c in columns.values()])
-
-        timestamp_clauses = [
-            models.GeoVersion.valid_from <= view.at,
-            or_(
-                models.GeoVersion.valid_to.is_(None),
-                models.GeoVersion.valid_to >= view.at,
-            ),
-        ]
+        view_set_version_ids = self._view_set_version_ids(db, view.view_id)
+        col_ids = [col.col_id for col in columns.values()]
 
         geo_id_query = (
-            select(models.Geography.geo_id)
-            .select_from(models.Geography)
-            .join(
-                models.GeoSetMember,
-                models.Geography.geo_id == models.GeoSetMember.geo_id,
-            )
-            .join(
-                models.GeoSetVersion,
-                models.GeoSetMember.set_version_id
-                == models.GeoSetVersion.set_version_id,
-            )
-            .where(models.GeoSetVersion.set_version_id.in_(view_set_version_ids))
+            select(models.GeoSetMember.geo_id)
+            .where(models.GeoSetMember.set_version_id.in_(view_set_version_ids))
             .distinct()
             .subquery("geo_id_query")
         )
 
+        col_agg_selects = []
+        column_aliases = []
+        for alias, col in columns.items():
+            value_col = getattr(models.ColumnValue, COLUMN_TYPE_TO_VALUE_COLUMN[col.type])
+            col_agg_selects.append(
+                func.max(value_col)
+                .filter(models.ColumnValue.col_id == col.col_id)
+                .label(alias)
+            )
+            column_aliases.append(alias)
+
         col_table_sub = (
-            select(models.ColumnValue)
+            select(models.ColumnValue.geo_id, *col_agg_selects)
             .select_from(models.ColumnValue)
             .where(models.ColumnValue.col_id.in_(col_ids))
             .where(models.ColumnValue.geo_id.in_(select(geo_id_query.c.geo_id)))
@@ -883,61 +876,73 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                     models.ColumnValue.valid_to >= view.at,
                 ),
             )
-            .distinct()
+            .group_by(models.ColumnValue.geo_id)
             .subquery("col_table_sub")
         )
 
-        agg_selects = []
-        column_labels = []
-        for _, col in columns.items():
-            agg_selects.append(
-                func.max(column(COLUMN_TYPE_TO_VALUE_COLUMN[col.type]))
-                .filter(col_table_sub.c.col_id == col.col_id)
-                .label(col.canonical_ref.path)
+        current_geo_version_sub = (
+            select(
+                models.GeoVersion.geo_id,
+                models.GeoVersion.geo_bin_id,
+                func.row_number()
+                .over(
+                    partition_by=models.GeoVersion.geo_id,
+                    order_by=models.GeoVersion.valid_from.desc(),
+                )
+                .label("row_num"),
             )
-            column_labels.append(column(col.canonical_ref.path))
+            .where(models.GeoVersion.geo_id.in_(select(geo_id_query.c.geo_id)))
+            .where(
+                models.GeoVersion.valid_from <= view.at,
+                or_(
+                    models.GeoVersion.valid_to.is_(None),
+                    models.GeoVersion.valid_to >= view.at,
+                ),
+            )
+            .subquery("current_geo_version_sub")
+        )
 
         geo_sub = (
             select(
-                models.Geography.geo_id, models.Geography.path, models.GeoBin.geography
+                models.Geography.geo_id,
+                models.Geography.path,
+                models.GeoBin.geography,
+                models.GeoBin.internal_point,
             )
             .select_from(models.Geography)
             .join(
-                models.GeoVersion, models.Geography.geo_id == models.GeoVersion.geo_id
+                current_geo_version_sub,
+                (models.Geography.geo_id == current_geo_version_sub.c.geo_id)
+                & (current_geo_version_sub.c.row_num == 1),
             )
             .join(
-                models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id
+                models.GeoBin,
+                current_geo_version_sub.c.geo_bin_id == models.GeoBin.geo_bin_id,
             )
-            .where(models.Geography.geo_id.in_(select(geo_id_query.c.geo_id)))
-            .where(*timestamp_clauses)
             .subquery("geo_sub")
         )
 
         geo_query = (
-            select(geo_sub.c.path, geo_sub.c.geography, *agg_selects)
-            .select_from(col_table_sub)
-            .join(geo_sub, geo_sub.c.geo_id == col_table_sub.c.geo_id)
-            .group_by(geo_sub.c.path, geo_sub.c.geography)
-            .distinct()
+            select(
+                geo_sub.c.path,
+                geo_sub.c.geography,
+                *[col_table_sub.c[alias] for alias in column_aliases],
+            )
+            .select_from(geo_sub)
+            .join(col_table_sub, geo_sub.c.geo_id == col_table_sub.c.geo_id)
         )
 
-        internal_point_query = (
-            select(models.Geography.path, models.GeoBin.internal_point)
-            .select_from(models.Geography)
-            .join(
-                models.GeoVersion, models.Geography.geo_id == models.GeoVersion.geo_id
-            )
-            .join(
-                models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id
-            )
-            .where(models.Geography.geo_id.in_(select(geo_id_query.c.geo_id)))
-            .where(*timestamp_clauses)
-            .distinct()
-        )
+        internal_point_query = select(geo_sub.c.path, geo_sub.c.internal_point)
 
-        plans, plan_labels, plan_assignments = self._plans(db, view)
-        geo_meta_ids, geo_meta = self._geo_meta(db, view)
-        geo_valid_from_dates = self._geo_valid_dates(db, view)
+        plans, plan_labels, plan_assignments = self._plans(
+            db, view, view_set_version_ids=view_set_version_ids
+        )
+        geo_meta_ids, geo_meta = self._geo_meta(
+            db, view, view_set_version_ids=view_set_version_ids
+        )
+        geo_valid_from_dates = self._geo_valid_dates(
+            db, view, view_set_version_ids=view_set_version_ids
+        )
 
         # Query generation: substitute in literals and remove the
         # ST_AsBinary() calls added by GeoAlchemy2.
@@ -983,7 +988,10 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         return ret
 
     def _geo_meta(
-        self, db: Session, view: models.View
+        self,
+        db: Session,
+        view: models.View,
+        view_set_version_ids: list[int] | None = None,
     ) -> tuple[dict[str, int], dict[int, models.ObjectMeta]]:
         """Gets object metadata associated with a view's geographies.
 
@@ -991,15 +999,8 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             (1) Mapping from geography paths to metadata IDs.
             (2) Mapping from metadata IDs to metadata objects.
         """
-        view_set_version_ids = [
-            item[0]
-            for item in (
-                db.query(models.ViewGeoSetVersions.set_version_id)
-                .filter(models.ViewGeoSetVersions.view_id == view.view_id)
-                .distinct()
-                .all()
-            )
-        ]
+        if view_set_version_ids is None:
+            view_set_version_ids = self._view_set_version_ids(db, view.view_id)
 
         members_sub = (
             select(models.GeoSetMember.geo_id)
@@ -1023,32 +1024,55 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
 
         return geo_meta_ids, distinct_meta
 
-    def _geo_valid_dates(self, db: Session, view: models.View) -> dict[str, datetime]:
+    def _geo_valid_dates(
+        self,
+        db: Session,
+        view: models.View,
+        view_set_version_ids: list[int] | None = None,
+    ) -> dict[str, datetime]:
         """Gets the valid dates for each geometry.
 
         Returns:
             A dictionary mapping geometry IDs to valid dates.
         """
-        view_set_version_ids = [
-            item[0]
-            for item in (
-                db.query(models.ViewGeoSetVersions.set_version_id)
-                .filter(models.ViewGeoSetVersions.view_id == view.view_id)
-                .distinct()
-                .all()
+        if view_set_version_ids is None:
+            view_set_version_ids = self._view_set_version_ids(db, view.view_id)
+
+        members_sub = (
+            select(models.GeoSetMember.geo_id)
+            .where(models.GeoSetMember.set_version_id.in_(view_set_version_ids))
+            .distinct()
+            .subquery("members_sub")
+        )
+        current_geo_version_sub = (
+            select(
+                models.GeoVersion.geo_id,
+                models.GeoVersion.valid_from,
+                func.row_number()
+                .over(
+                    partition_by=models.GeoVersion.geo_id,
+                    order_by=models.GeoVersion.valid_from.desc(),
+                )
+                .label("row_num"),
             )
-        ]
+            .join(members_sub, members_sub.c.geo_id == models.GeoVersion.geo_id)
+            .where(
+                models.GeoVersion.valid_from <= view.at,
+                or_(
+                    models.GeoVersion.valid_to.is_(None),
+                    models.GeoVersion.valid_to >= view.at,
+                ),
+            )
+            .subquery("current_geo_version_sub")
+        )
 
         query = (
-            select(models.Geography.path, models.GeoVersion.valid_from)
+            select(models.Geography.path, current_geo_version_sub.c.valid_from)
             .join(
-                models.GeoSetMember,
-                models.Geography.geo_id == models.GeoSetMember.geo_id,
+                current_geo_version_sub,
+                models.Geography.geo_id == current_geo_version_sub.c.geo_id,
             )
-            .join(
-                models.GeoVersion, models.Geography.geo_id == models.GeoVersion.geo_id
-            )
-            .where(models.GeoSetMember.set_version_id.in_(view_set_version_ids))
+            .where(current_geo_version_sub.c.row_num == 1)
         )
 
         result = db.execute(query)
@@ -1056,7 +1080,10 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         return {row.path: row.valid_from for row in result}
 
     def _plans(
-        self, db: Session, view: models.View
+        self,
+        db: Session,
+        view: models.View,
+        view_set_version_ids: list[int] | None = None,
     ) -> tuple[list[models.Plan], list[str], Sequence | None]:
         """Gets plans associated with a view.
 
@@ -1067,15 +1094,8 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             (3) A database iterator for the plan assignments, if any assignments
                 are available.
         """
-        view_set_version_ids = [
-            item[0]
-            for item in (
-                db.query(models.ViewGeoSetVersions.set_version_id)
-                .filter(models.ViewGeoSetVersions.view_id == view.view_id)
-                .distinct()
-                .all()
-            )
-        ]
+        if view_set_version_ids is None:
+            view_set_version_ids = self._view_set_version_ids(db, view.view_id)
 
         # Get plans that existed when the view was created.
         plans = (
@@ -1134,14 +1154,14 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             for plan_sub, plan_label in zip(plan_subs, plan_labels)
         ]
         plan_assignment_query = (
-            select(models.GeoVersion.geo_id, geo_sub.c.path, *plan_cols)
-            .join(geo_sub, geo_sub.c.geo_id == models.GeoVersion.geo_id)
-            .join(members_sub, members_sub.c.geo_id == models.GeoVersion.geo_id)
+            select(members_sub.c.geo_id, geo_sub.c.path, *plan_cols)
+            .select_from(members_sub)
+            .join(geo_sub, geo_sub.c.geo_id == members_sub.c.geo_id)
         )
         for plan_sub in plan_subs:
             plan_assignment_query = plan_assignment_query.outerjoin(
                 plan_sub,
-                plan_sub.c.geo_id == models.GeoVersion.geo_id,
+                plan_sub.c.geo_id == members_sub.c.geo_id,
             )
         plan_assignments = db.execute(plan_assignment_query).fetchall()
 
