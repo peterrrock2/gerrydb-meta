@@ -2,14 +2,15 @@
 
 import os
 import subprocess
+import time
 from datetime import timedelta
 from http import HTTPStatus
 from urllib.parse import urlparse
-import time
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy.orm import Session
+from google.api_core.exceptions import GoogleAPIError
+from google.auth.exceptions import GoogleAuthError
 from google.cloud import storage
 from google.oauth2.service_account import Credentials
 from sqlalchemy.orm import Session
@@ -21,7 +22,6 @@ from gerrydb_meta.api.base import (
     geo_set_from_paths,
     geos_from_paths,
 )
-from gerrydb_meta.api.base import add_etag
 from gerrydb_meta.scopes import ScopeManager
 from gerrydb_meta.render import graph_to_gpkg
 from gerrydb_meta.api.deps import (
@@ -213,6 +213,7 @@ def render_graph(
             status_code=HTTPStatus.NOT_FOUND,
             detail=f"Graph not found in namespace.",
         )
+    etag = crud.graph.etag(db, namespace_obj)
 
     bucket_name = os.getenv("GCS_BUCKET")
     key_path = os.getenv("GCS_KEY_PATH")
@@ -221,44 +222,7 @@ def render_graph(
         try:
             storage_credentials = Credentials.from_service_account_file(key_path)
             storage_client = storage.Client(credentials=storage_credentials)
-        except Exception:
-            log.exception("Failed to initialize Google Cloud Storage context.")
-            storage_credentials = storage_client = None
-    has_gcs_context = storage_client is not None
-
-    cached_render_meta = crud.graph.get_cached_render(db=db, graph=graph_obj)
-    if cached_render_meta is not None and has_gcs_context:  # pragma: no cover
-        render_path = urlparse(cached_render_meta.path)
-        try:
-            bucket = storage_client.bucket(render_path.netloc)
-            blob = bucket.get_blob(render_path.path[1:])
-            redirect_url = blob.generate_signed_url(
-                version="v4",
-                expiration=timedelta(minutes=15),
-                method="GET",
-                # see https://stackoverflow.com/a/64245028
-                service_account_email=storage_credentials.service_account_email,
-                access_token=storage_credentials.token,
-            )
-            return RedirectResponse(
-                url=redirect_url,
-                status_code=HTTPStatus.PERMANENT_REDIRECT,
-            )
-        except Exception:
-            log.exception(
-                "Failed to serve rendered graph via Google Cloud Storage. "
-                "Falling back to direct streaming."
-            )
-
-    bucket_name = os.getenv("GCS_BUCKET")
-    key_path = os.getenv("GCS_KEY_PATH")
-    storage_credentials = storage_client = None
-
-    if bucket_name is not None and key_path is not None:  # pragma: no cover
-        try:
-            storage_credentials = Credentials.from_service_account_file(key_path)
-            storage_client = storage.Client(credentials=storage_credentials)
-        except Exception:
+        except (GoogleAuthError, OSError, ValueError):
             log.exception("Failed to initialize Google Cloud Storage context.")
             storage_credentials = storage_client = None
     has_gcs_context = storage_client is not None
@@ -270,6 +234,10 @@ def render_graph(
         try:
             bucket = storage_client.bucket(render_path.netloc)
             blob = bucket.get_blob(render_path.path[1:])
+            if blob is None:
+                raise FileNotFoundError(
+                    f"Cached graph render not found in bucket: {render_path.path[1:]}"
+                )
             redirect_url = blob.generate_signed_url(
                 version="v4",
                 expiration=timedelta(minutes=15),
@@ -282,7 +250,7 @@ def render_graph(
                 url=redirect_url,
                 status_code=HTTPStatus.PERMANENT_REDIRECT,
             )
-        except Exception:
+        except (GoogleAPIError, GoogleAuthError, OSError, ValueError):
             log.exception(
                 "Failed to serve rendered graph via Google Cloud Storage. "
                 "Falling back to direct streaming."
@@ -290,7 +258,6 @@ def render_graph(
 
     log.debug("BEFORE GRAPH RENDER")
     start = time.perf_counter()
-    etag = crud.graph.etag(db, namespace_obj)
     render_ctx = crud.graph.render(db=db, graph=graph_obj)
     log.debug("RENDER CTX %s", render_ctx)
     log.debug("Time to render graph: %s", time.perf_counter() - start)
@@ -331,13 +298,17 @@ def render_graph(
                 url=redirect_url,
                 status_code=HTTPStatus.PERMANENT_REDIRECT,
             )
-        except Exception as ex:
+        except (
+            GoogleAPIError,
+            GoogleAuthError,
+            OSError,
+            ValueError,
+            subprocess.SubprocessError,
+        ):
             log.exception(
                 "Failed to serve rendered graph via Google Cloud Storage. "
                 "Falling back to direct streaming."
             )
-            raise ex
-
     return FileResponse(
         gpkg_path,
         media_type=GPKG_MEDIA_TYPE,

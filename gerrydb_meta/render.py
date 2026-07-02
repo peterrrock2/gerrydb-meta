@@ -5,7 +5,9 @@ import subprocess
 import tempfile
 import uuid
 from pathlib import Path
-import os, sys, shlex
+import os
+import shlex
+import sys
 import time
 
 import orjson as json
@@ -28,6 +30,42 @@ from uvicorn.config import logger as log
 
 class RenderError(Exception):
     """Raised when rendering a view fails."""
+
+
+def _ogr2ogr_common_args() -> list[str]:
+    """Builds shared tuning arguments for ogr2ogr transfer performance."""
+    args = []
+
+    pg_cursor_page = os.getenv("GERRYDB_OGR_PG_CURSOR_PAGE", "50000")
+    if pg_cursor_page:
+        args.extend(["--config", "OGR_PG_CURSOR_PAGE", pg_cursor_page])
+
+    sqlite_sync = os.getenv("GERRYDB_OGR_SQLITE_SYNCHRONOUS", "OFF")
+    if sqlite_sync:
+        args.extend(["--config", "OGR_SQLITE_SYNCHRONOUS", sqlite_sync])
+
+    sqlite_pragma = os.getenv(
+        "GERRYDB_OGR_SQLITE_PRAGMA",
+        "journal_mode=OFF,temp_store=MEMORY,cache_size=-262144,locking_mode=EXCLUSIVE",
+    )
+    if sqlite_pragma:
+        args.extend(["--config", "OGR_SQLITE_PRAGMA", sqlite_pragma])
+
+    group_size = os.getenv("GERRYDB_OGR2OGR_GROUP_SIZE", "65536")
+    if group_size:
+        args.extend(["-gt", group_size])
+
+    return args
+
+
+def _ogr2ogr_sql_args(query: str) -> list[str]:
+    """Builds SQL arguments for server-side execution in PostgreSQL."""
+    args = []
+    dialect = os.getenv("GERRYDB_OGR_SQL_DIALECT", "PostgreSQL")
+    if dialect:
+        args.extend(["-dialect", dialect])
+    args.extend(["-sql", query])
+    return args
 
 
 def _init_base_graph_gpkg_extensions(conn: sqlite3.Connection, layer_name: str) -> None:
@@ -298,9 +336,9 @@ def __get_arg_max() -> int:
                 arg_max = os.sysconf("SC_ARG_MAX")
                 if arg_max > 0:
                     return arg_max
-            except (ValueError, OSError) as e:
-                log.error(f"Warning: Unable to retrieve ARG_MAX using os.sysconf: {e}")
-                raise e
+            except (ValueError, OSError):
+                log.exception("Unable to retrieve ARG_MAX using os.sysconf.")
+                raise
 
     if sys.platform.startswith("win"):
         raise RuntimeError("This function cannot be run in a Windows environment.")
@@ -310,7 +348,7 @@ def __get_arg_max() -> int:
     return 2097152
 
 
-def __validate_query(query: str) -> bool:
+def __validate_query(query: str) -> None:
     """
     Ensures that the query is does not exceed the maximum allowable
     length of queries made to the terminal. This is generally governed by
@@ -330,7 +368,7 @@ def __validate_query(query: str) -> bool:
 
 
 def __run_subprocess(
-    context: ViewRenderContext, subprocess_command_list: list[str]
+    context: ViewRenderContext | GraphRenderContext, subprocess_command_list: list[str]
 ) -> None:
     try:
         subprocess.run(
@@ -342,11 +380,13 @@ def __run_subprocess(
         # Watch out for accidentally leaking credentials via logging here.
         # Production deployments should use a PostgreSQL connection service file
         # to pass credentials to ogr2ogr instead of passing a raw connection string.
+        stdout = ex.stdout.decode("utf-8") if ex.stdout else ""
+        stderr = ex.stderr.decode("utf-8") if ex.stderr else ""
         log.exception(
             "Failed to export view with ogr2ogr. Query: %s", context.geo_query
         )
-        log.error("ogr2ogr stdout: %s", ex.stdout.decode("utf-8"))
-        log.error("ogr2ogr stderr: %s", ex.stderr.decode("utf-8"))
+        log.error("ogr2ogr stdout: %s", stdout)
+        log.error("ogr2ogr stderr: %s", stderr)
         raise RenderError("Failed to render view: geography query failed.")
 
 
@@ -358,19 +398,30 @@ def __validate_geo_and_internal_point_rows_count(
     type: str,
     expected_count: int | None = None,
 ) -> None:
+    def _feature_count(layer_name: str) -> int:
+        # `gpkg_ogr_contents` is maintained by GDAL and gives O(1) row counts.
+        # Fallback to COUNT(*) if unavailable.
+        try:
+            row = conn.execute(
+                "SELECT feature_count FROM gpkg_ogr_contents WHERE table_name = ?",
+                (layer_name,),
+            ).fetchone()
+            if row is not None and row[0] is not None:
+                return int(row[0])
+        except sqlite3.OperationalError:
+            pass
+
+        return conn.execute(f"SELECT COUNT(*) FROM {layer_name}").fetchone()[0]
+
     try:
-        geo_row_count = conn.execute(
-            f"SELECT COUNT(*) FROM {geo_layer_name}"
-        ).fetchone()[0]
+        geo_row_count = _feature_count(geo_layer_name)
     except sqlite3.OperationalError as ex:
         raise RenderError(
             f"Failed to render {type}: geographic layer not found in GeoPackage.",
         ) from ex
 
     try:
-        internal_point_row_count = conn.execute(
-            f"SELECT COUNT(*) FROM {internal_point_layer_name}"
-        ).fetchone()[0]
+        internal_point_row_count = _feature_count(internal_point_layer_name)
     except sqlite3.OperationalError as ex:
         raise RenderError(
             f"Failed to render {type}: internal point layer not found in GeoPackage.",
@@ -399,6 +450,7 @@ def __insert_geopackage_geometries(
 ) -> None:
     log.debug("Before ogr2ogr")
     base_args = [
+        *_ogr2ogr_common_args(),
         "-f",
         "GPKG",
         str(gpkg_path),
@@ -426,8 +478,7 @@ def __insert_geopackage_geometries(
     subprocess_command_list = [
         "ogr2ogr",
         *base_args,
-        "-sql",
-        context.geo_query,
+        *_ogr2ogr_sql_args(context.geo_query),
         "-nln",
         geo_layer_name,
     ]
@@ -445,8 +496,7 @@ def __insert_geopackage_geometries(
         "ogr2ogr",
         *base_args,
         "-update",
-        "-sql",
-        context.internal_point_query,
+        *_ogr2ogr_sql_args(context.internal_point_query),
         "-nln",
         internal_point_layer_name,
         "-skipfailures",  # Empty points are read as a failure

@@ -2,13 +2,15 @@
 
 import os
 import subprocess
+import time
 from datetime import timedelta
 from http import HTTPStatus
 from urllib.parse import urlparse
-import time
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from fastapi.responses import RedirectResponse, FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
+from google.api_core.exceptions import GoogleAPIError
+from google.auth.exceptions import GoogleAuthError
 from google.cloud import storage
 from google.oauth2.service_account import Credentials
 from sqlalchemy.orm import Session
@@ -122,13 +124,11 @@ def create_view(
             layer=layer_obj,
             graph=graph_obj,
         )
-    except Exception as e:
-        if isinstance(e, ViewConflictError):
-            raise HTTPException(
-                status_code=HTTPStatus.CONFLICT,
-                detail=f"Cannot create view. {e}",
-            )
-        raise e
+    except ViewConflictError as ex:
+        raise HTTPException(
+            status_code=HTTPStatus.CONFLICT,
+            detail=f"Cannot create view. {ex}",
+        ) from ex
     add_etag(response, etag)
     return schemas.ViewMeta.from_attributes(view_obj)
 
@@ -238,6 +238,7 @@ def render_view(
             status_code=HTTPStatus.NOT_FOUND,
             detail=f"View not found in namespace.",
         )
+    etag = crud.view.etag(db, view_namespace_obj)
 
     bucket_name = os.getenv("GCS_BUCKET")
     key_path = os.getenv("GCS_KEY_PATH")
@@ -246,7 +247,7 @@ def render_view(
         try:
             storage_credentials = Credentials.from_service_account_file(key_path)
             storage_client = storage.Client(credentials=storage_credentials)
-        except Exception:
+        except (GoogleAuthError, OSError, ValueError):
             log.exception("Failed to initialize Google Cloud Storage context.")
             storage_credentials = storage_client = None
     has_gcs_context = storage_client is not None
@@ -258,6 +259,10 @@ def render_view(
         try:
             bucket = storage_client.bucket(render_path.netloc)
             blob = bucket.get_blob(render_path.path[1:])
+            if blob is None:
+                raise FileNotFoundError(
+                    f"Cached view render not found in bucket: {render_path.path[1:]}"
+                )
             redirect_url = blob.generate_signed_url(
                 version="v4",
                 expiration=timedelta(minutes=15),
@@ -270,7 +275,7 @@ def render_view(
                 url=redirect_url,
                 status_code=HTTPStatus.PERMANENT_REDIRECT,
             )
-        except Exception:
+        except (GoogleAPIError, GoogleAuthError, OSError, ValueError):
             log.exception(
                 "Failed to serve rendered view via Google Cloud Storage. "
                 "Falling back to direct streaming."
@@ -278,7 +283,6 @@ def render_view(
 
     log.debug("BEFORE RENDER")
     start = time.perf_counter()
-    etag = crud.view.etag(db, view_namespace_obj)
     render_ctx = crud.view.render(db=db, view=view_obj)
     log.debug("Time to render: %s", time.perf_counter() - start)
     start = time.perf_counter()
@@ -318,13 +322,17 @@ def render_view(
                 url=redirect_url,
                 status_code=HTTPStatus.PERMANENT_REDIRECT,
             )
-        except Exception as ex:
+        except (
+            GoogleAPIError,
+            GoogleAuthError,
+            OSError,
+            ValueError,
+            subprocess.SubprocessError,
+        ):
             log.exception(
                 "Failed to serve rendered view via Google Cloud Storage. "
                 "Falling back to direct streaming."
             )
-            raise ex
-
     log.debug("Returning GPKG response")
     return FileResponse(
         gpkg_path,
