@@ -2,6 +2,7 @@
 
 # pragma: no cover
 import os
+from pathlib import Path
 
 import click
 from sqlalchemy import create_engine, text
@@ -9,9 +10,6 @@ from sqlalchemy.orm import sessionmaker
 
 from gerrydb_meta.admin import GerryAdmin
 from gerrydb_meta.models import Base
-
-from pathlib import Path
-import os
 
 GERRYDB_SQL_ECHO = bool(os.environ.get("GERRYDB_SQL_ECHO", False))
 

@@ -856,7 +856,9 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         col_agg_selects = []
         column_aliases = []
         for alias, col in columns.items():
-            value_col = getattr(models.ColumnValue, COLUMN_TYPE_TO_VALUE_COLUMN[col.type])
+            value_col = getattr(
+                models.ColumnValue, COLUMN_TYPE_TO_VALUE_COLUMN[col.type]
+            )
             col_agg_selects.append(
                 func.max(value_col)
                 .filter(models.ColumnValue.col_id == col.col_id)

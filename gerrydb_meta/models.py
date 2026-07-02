@@ -338,7 +338,9 @@ class GeoSetVersion(Base):
 
 class GeoSetMember(Base):
     __tablename__ = "geo_set_member"
-    __table_args__ = (Index("ix_geo_set_member_geo_id_set_version_id", "geo_id", "set_version_id"),)
+    __table_args__ = (
+        Index("ix_geo_set_member_geo_id_set_version_id", "geo_id", "set_version_id"),
+    )
 
     set_version_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("geo_set_version.set_version_id"), primary_key=True
