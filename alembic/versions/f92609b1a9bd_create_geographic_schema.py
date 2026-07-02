@@ -79,9 +79,7 @@ def upgrade() -> None:
         sa.Column("valid_to", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "geography",
-            geoalchemy2.types.Geography(
-                srid=4269, from_text="ST_GeogFromText", name="geography"
-            ),
+            geoalchemy2.types.Geography(srid=4269, from_text="ST_GeogFromText", name="geography"),
             nullable=True,
         ),
         sa.Column(
@@ -209,8 +207,6 @@ def downgrade() -> None:
         postgresql_using="gist",
     )
     op.drop_table("geo_version", schema="gerrydb")
-    op.drop_index(
-        op.f("ix_gerrydb_geo_import_uuid"), table_name="geo_import", schema="gerrydb"
-    )
+    op.drop_index(op.f("ix_gerrydb_geo_import_uuid"), table_name="geo_import", schema="gerrydb")
     op.drop_table("geo_import", schema="gerrydb")
     op.drop_table("geography", schema="gerrydb")

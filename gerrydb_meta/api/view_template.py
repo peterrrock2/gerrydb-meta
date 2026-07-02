@@ -5,13 +5,12 @@ from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
+from uvicorn.config import logger as log
 
 from gerrydb_meta import crud, models, schemas
 from gerrydb_meta.api.base import NamespacedObjectApi, add_etag, from_resource_paths
 from gerrydb_meta.api.deps import get_db, get_obj_meta, get_scopes
 from gerrydb_meta.scopes import ScopeManager
-from uvicorn.config import logger as log
-
 
 MAX_VIEW_TEMPLATE_COLUMNS = 100
 
@@ -22,10 +21,7 @@ class ViewTemplateApi(NamespacedObjectApi):
         if not scopes.can_read_in_public_namespaces():
             raise HTTPException(
                 status_code=HTTPStatus.NOT_FOUND,
-                detail=(
-                    "Cannot read in public namespaces "
-                    "(required for view template access)."
-                ),
+                detail=("Cannot read in public namespaces (required for view template access)."),
             )
 
     def _namespace_with_read(
@@ -65,9 +61,7 @@ class ViewTemplateApi(NamespacedObjectApi):
             scopes: ScopeManager = Depends(get_scopes),
         ):
             log.debug("TOP OF CREATE VIEW TEMPLATE")
-            namespace_obj = self._namespace_with_write(
-                db=db, scopes=scopes, path=namespace
-            )
+            namespace_obj = self._namespace_with_write(db=db, scopes=scopes, path=namespace)
             resolved_objs = from_resource_paths(
                 paths=obj_in.members, db=db, scopes=scopes, follow_refs=False
             )

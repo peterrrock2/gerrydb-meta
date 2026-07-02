@@ -1,5 +1,5 @@
-from gerrydb_meta.crud.api_key import ReadOnlyApiKey
 from gerrydb_meta import models
+from gerrydb_meta.crud.api_key import ReadOnlyApiKey
 
 
 def test_get_api_key(db_with_user_api_key):

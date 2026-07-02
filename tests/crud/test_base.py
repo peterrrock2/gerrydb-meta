@@ -1,6 +1,7 @@
+import pytest
+
 from gerrydb_meta.crud.base import *
 from gerrydb_meta.exceptions import GerryPathError
-import pytest
 
 
 def test_normalize_path_flat():
@@ -27,31 +28,19 @@ def test_normalize_case_sensitive_long_path():
 
 
 def test_normalize_path_bad_substrings():
-    with pytest.raises(
-        GerryPathError, match="Please remove or replace the following substring"
-    ):
+    with pytest.raises(GerryPathError, match="Please remove or replace the following substring"):
         normalize_path("greece;atlantis")
 
-    with pytest.raises(
-        GerryPathError, match="Please remove or replace the following substring"
-    ):
+    with pytest.raises(GerryPathError, match="Please remove or replace the following substring"):
         normalize_path("greece..atlantis")
 
-    with pytest.raises(
-        GerryPathError, match="Please remove or replace the following substring"
-    ):
+    with pytest.raises(GerryPathError, match="Please remove or replace the following substring"):
         normalize_path("greece atlantis")
 
 
 def test_bad_path_lenghts():
-    with pytest.raises(
-        GerryPathError, match=r"This path has 3 segment\(s\), but should have 2"
-    ):
+    with pytest.raises(GerryPathError, match=r"This path has 3 segment\(s\), but should have 2"):
         normalize_path("greece/atlantis/underworld", path_length=2)
 
-    with pytest.raises(
-        GerryPathError, match=r"This path has 3 segment\(s\), but should have 2"
-    ):
-        normalize_path(
-            "greece/atlantis/underworld", case_sensitive_uid=True, path_length=2
-        )
+    with pytest.raises(GerryPathError, match=r"This path has 3 segment\(s\), but should have 2"):
+        normalize_path("greece/atlantis/underworld", case_sensitive_uid=True, path_length=2)

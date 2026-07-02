@@ -1,4 +1,5 @@
 from sqlalchemy import text
+
 from gerrydb_meta import models
 
 

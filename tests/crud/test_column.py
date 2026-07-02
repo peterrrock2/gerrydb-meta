@@ -1,9 +1,9 @@
 """Tests for GerryDB CRUD operations on column metadata."""
 
 import pytest
-from gerrydb_meta import crud, schemas
+
+from gerrydb_meta import crud, models, schemas
 from gerrydb_meta.enums import ColumnKind, ColumnType
-from gerrydb_meta import models
 
 
 def make_atlantis_ns(db, meta):
@@ -66,12 +66,10 @@ def test_crud_column_get_ref(db_with_meta):
     assert crud.column.get_ref(db=db, path="mayor", namespace=ns).col_id == col.col_id
     assert crud.column.get_ref(db=db, path="mayor", namespace=ns) is col.canonical_ref
     assert (
-        crud.column.get_global_ref(db=db, path=(None, "mayor"), namespace=ns).col_id
-        == col.col_id
+        crud.column.get_global_ref(db=db, path=(None, "mayor"), namespace=ns).col_id == col.col_id
     )
     assert (
-        crud.column.get_global_ref(db=db, path=(None, "mayor"), namespace=ns)
-        is col.canonical_ref
+        crud.column.get_global_ref(db=db, path=(None, "mayor"), namespace=ns) is col.canonical_ref
     )
 
 
@@ -114,9 +112,7 @@ def test_crud_column_get_global_ref(db_with_meta):
     )
 
     assert (
-        crud.column.get_global_ref(
-            db=db, path=("atlantis", "mayor"), namespace=ns
-        ).col_id
+        crud.column.get_global_ref(db=db, path=("atlantis", "mayor"), namespace=ns).col_id
         == col.col_id
     )
     assert (
@@ -124,20 +120,15 @@ def test_crud_column_get_global_ref(db_with_meta):
         is col.canonical_ref
     )
     assert (
-        crud.column.get_global_ref(
-            db=db, path=("atlantis", "mayor"), namespace=ns
-        ).namespace_id
+        crud.column.get_global_ref(db=db, path=("atlantis", "mayor"), namespace=ns).namespace_id
         == ns.namespace_id
     )
     assert (
-        crud.column.get_global_ref(
-            db=db, path=("atlantis", "mayor"), namespace=ns
-        ).meta_id
+        crud.column.get_global_ref(db=db, path=("atlantis", "mayor"), namespace=ns).meta_id
         == meta.meta_id
     )
     assert (
-        crud.column.get_global_ref(db=db, path=("atlantis", "mayor"), namespace=ns).path
-        == "mayor"
+        crud.column.get_global_ref(db=db, path=("atlantis", "mayor"), namespace=ns).path == "mayor"
     )
 
 

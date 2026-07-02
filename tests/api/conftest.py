@@ -1,8 +1,8 @@
 """Fixtures for REST API tests."""
 
+import random
 from dataclasses import dataclass
 from typing import Generator
-import random
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from gerrydb_meta import crud, models, schemas
 from gerrydb_meta.admin import GerryAdmin
 from gerrydb_meta.api.deps import get_db
-from gerrydb_meta.enums import NamespaceGroup, ScopeType, GroupPermissions
+from gerrydb_meta.enums import GroupPermissions, NamespaceGroup, ScopeType
 from gerrydb_meta.main import app
 
 from .scopes import grant_namespaced_scope, grant_scope

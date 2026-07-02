@@ -6,11 +6,11 @@ from typing import Tuple
 
 from sqlalchemy import exc, insert, update
 from sqlalchemy.orm import Session
+from uvicorn.config import logger as log
 
 from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.exceptions import CreateValueError
-from uvicorn.config import logger as log
 
 
 class CRGeoLayer(NamespacedCRBase[models.GeoLayer, schemas.GeoLayerCreate]):
@@ -34,9 +34,7 @@ class CRGeoLayer(NamespacedCRBase[models.GeoLayer, schemas.GeoLayerCreate]):
                 description=obj_in.description,
                 namespace_id=namespace.namespace_id,
                 meta_id=obj_meta.meta_id,
-                source_url=(
-                    str(obj_in.source_url) if obj_in.source_url is not None else None
-                ),
+                source_url=(str(obj_in.source_url) if obj_in.source_url is not None else None),
             )
             db.add(geo_layer)
 
@@ -56,9 +54,7 @@ class CRGeoLayer(NamespacedCRBase[models.GeoLayer, schemas.GeoLayerCreate]):
         db.refresh(geo_layer)
         return geo_layer, etag
 
-    def get(
-        self, db: Session, *, path: str, namespace: models.Namespace
-    ) -> models.GeoLayer | None:
+    def get(self, db: Session, *, path: str, namespace: models.Namespace) -> models.GeoLayer | None:
         """Retrieves a geographic layer by reference path.
 
         Args:
@@ -88,8 +84,7 @@ class CRGeoLayer(NamespacedCRBase[models.GeoLayer, schemas.GeoLayerCreate]):
 
         if len(set(geo.namespace_id for geo in geographies)) > 1:
             raise CreateValueError(
-                "Cannot map geographies in multiple namespaces "
-                "to a geographic layer."
+                "Cannot map geographies in multiple namespaces to a geographic layer."
             )
 
         new_geo_ids = set(geo.geo_id for geo in geographies)
@@ -102,8 +97,7 @@ class CRGeoLayer(NamespacedCRBase[models.GeoLayer, schemas.GeoLayerCreate]):
                     for item in db.query(models.GeoSetMember.geo_id)
                     .join(
                         models.GeoSetVersion,
-                        models.GeoSetMember.set_version_id
-                        == models.GeoSetVersion.set_version_id,
+                        models.GeoSetMember.set_version_id == models.GeoSetVersion.set_version_id,
                     )
                     .all()
                 ]

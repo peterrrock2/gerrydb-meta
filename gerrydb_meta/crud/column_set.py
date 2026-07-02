@@ -5,12 +5,12 @@ from typing import Tuple
 
 from sqlalchemy import exc
 from sqlalchemy.orm import Session
+from uvicorn.config import logger as log
 
 from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.crud.column import column as crud_column
 from gerrydb_meta.exceptions import CreateValueError
-from uvicorn.config import logger as log
 
 
 class CRColumnSet(NamespacedCRBase[models.ColumnSet, schemas.ColumnSetCreate]):
@@ -61,9 +61,7 @@ class CRColumnSet(NamespacedCRBase[models.ColumnSet, schemas.ColumnSetCreate]):
                 for ref_obj in refs:
                     if ref_obj.column.canonical_ref_id not in ref_to_path_dict:
                         ref_to_path_dict[ref_obj.column.canonical_ref_id] = []
-                    ref_to_path_dict[ref_obj.column.canonical_ref_id].append(
-                        ref_obj.path
-                    )
+                    ref_to_path_dict[ref_obj.column.canonical_ref_id].append(ref_obj.path)
 
                 raise CreateValueError(
                     "Columns in a column set must be unique. Found "

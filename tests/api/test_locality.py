@@ -1,7 +1,7 @@
 """Tests for GerryDB REST API locality endpoints."""
 
-from http import HTTPStatus
 import logging
+from http import HTTPStatus
 
 import pytest
 
@@ -85,9 +85,7 @@ def test_api_locality_create_read__parent_and_aliases(ctx_locality_read_write):
             }
         ],
     )
-    assert (
-        create_child_response.status_code == HTTPStatus.CREATED
-    ), create_child_response.json()
+    assert create_child_response.status_code == HTTPStatus.CREATED, create_child_response.json()
     create_child_body = schemas.Locality(**create_child_response.json()[0])
     assert create_child_body.name == name
     assert create_child_body.canonical_path == path
@@ -190,14 +188,10 @@ def test_api_locality_patch__add_aliases(ctx_locality_read_write):
     )
     assert create_response.status_code == HTTPStatus.CREATED
 
-    patch_response = ctx.client.patch(
-        f"{LOCALITIES_ROOT}/{path}", json={"aliases": aliases[:1]}
-    )
+    patch_response = ctx.client.patch(f"{LOCALITIES_ROOT}/{path}", json={"aliases": aliases[:1]})
     assert patch_response.status_code == HTTPStatus.OK
 
-    patch_again_response = ctx.client.patch(
-        f"{LOCALITIES_ROOT}/{path}", json={"aliases": aliases}
-    )
+    patch_again_response = ctx.client.patch(f"{LOCALITIES_ROOT}/{path}", json={"aliases": aliases})
     assert patch_again_response.status_code == HTTPStatus.OK
     patch_body = schemas.Locality(**patch_again_response.json())
     assert set(patch_body.aliases) == set(aliases)
@@ -236,8 +230,6 @@ def test_api_missing_loc_errors(ctx_locality_read_only, caplog):
     assert response.status_code == HTTPStatus.NOT_FOUND
     assert "Locality not found" in response.json()["detail"]
 
-    response = ctx.client.patch(
-        f"{LOCALITIES_ROOT}/bad_path", json={"aliases": aliases[:1]}
-    )
+    response = ctx.client.patch(f"{LOCALITIES_ROOT}/bad_path", json={"aliases": aliases[:1]})
     assert response.status_code == HTTPStatus.NOT_FOUND
     assert "Locality not found" in response.json()["detail"]

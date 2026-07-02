@@ -1,12 +1,13 @@
-import networkx as nx
-from gerrydb_meta import crud, schemas
-from gerrydb_meta.enums import ColumnKind, ColumnType
-from shapely import Point, Polygon
-import pytest
-from gerrydb_meta import models
-from gerrydb_meta.exceptions import CreateValueError
 import uuid
 from datetime import datetime, timezone
+
+import networkx as nx
+import pytest
+from shapely import Point, Polygon
+
+from gerrydb_meta import crud, models, schemas
+from gerrydb_meta.enums import ColumnKind, ColumnType
+from gerrydb_meta.exceptions import CreateValueError
 
 square_corners = [(-1, -1), (1, -1), (1, 1), (-1, 1)]
 
@@ -102,9 +103,7 @@ def test_view_create(db_with_meta):
                 for (a, b), attr in grid_graph.edges.items()
             ],
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={"central": geo[0][0], "western": geo[1][0]},
         obj_meta=meta,
         namespace=ns,
@@ -280,9 +279,7 @@ def test_view_get(db_with_meta):
                 for (a, b), attr in grid_graph.edges.items()
             ],
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={"central": geo[0][0], "western": geo[1][0]},
         obj_meta=meta,
         namespace=ns,
@@ -452,9 +449,7 @@ def test_view_render(db_with_meta):
                 for (a, b), attr in grid_graph.edges.items()
             ],
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={"central": geo[0][0], "western": geo[1][0]},
         obj_meta=meta,
         namespace=ns,
@@ -545,9 +540,7 @@ def test_view_render(db_with_meta):
         graph=created_graph,
     )
 
-    geo_set_version = crud.geo_layer.get_set_by_locality(
-        db=db, layer=geo_layer, locality=loc[0]
-    )
+    geo_set_version = crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0])
 
     plan, _ = crud.plan.create(
         db=db,
@@ -572,9 +565,7 @@ def test_view_render(db_with_meta):
     assert set(view_render_context.columns.keys()) == set(["mayor", "population"])
     assert view_render_context.plan_labels == ["atlantis_plan"]
 
-    new_plan_assignment_list = [
-        (b, c) for a, b, c in view_render_context.plan_assignments
-    ]
+    new_plan_assignment_list = [(b, c) for a, b, c in view_render_context.plan_assignments]
     assert new_plan_assignment_list == [
         ("central_atlantis", "1"),
         ("western_atlantis", "2"),
@@ -655,9 +646,7 @@ def test_view_make_and_get_cached_render(db_with_meta_and_user):
                 for (a, b), attr in grid_graph.edges.items()
             ],
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={"central": geo[0][0], "western": geo[1][0]},
         obj_meta=meta,
         namespace=ns,
@@ -748,9 +737,7 @@ def test_view_make_and_get_cached_render(db_with_meta_and_user):
         graph=created_graph,
     )
 
-    geo_set_version = crud.geo_layer.get_set_by_locality(
-        db=db, layer=geo_layer, locality=loc[0]
-    )
+    geo_set_version = crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0])
 
     plan, _ = crud.plan.create(
         db=db,
@@ -783,8 +770,8 @@ def test_view_make_and_get_cached_render(db_with_meta_and_user):
     assert retrieved_cashed_render == cashed_render
 
 
-from unittest.mock import patch
 import logging
+from unittest.mock import patch
 
 
 def test_view_errors(db_with_meta, caplog):
@@ -1118,9 +1105,7 @@ def test_view_errors(db_with_meta, caplog):
                 for (a, b), attr in grid_graph.edges.items()
             ],
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={"central": geo[0][0], "western": geo[1][0]},
         obj_meta=meta,
         namespace=ns,

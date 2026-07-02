@@ -59,9 +59,7 @@ def upgrade() -> None:
         unique=False,
         schema="gerrydb",
     )
-    op.create_index(
-        op.f("ix_gerrydb_plan_path"), "plan", ["path"], unique=False, schema="gerrydb"
-    )
+    op.create_index(op.f("ix_gerrydb_plan_path"), "plan", ["path"], unique=False, schema="gerrydb")
     op.create_index(
         op.f("ix_gerrydb_plan_set_version_id"),
         "plan",
@@ -85,11 +83,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("plan_assignment", schema="gerrydb")
-    op.drop_index(
-        op.f("ix_gerrydb_plan_set_version_id"), table_name="plan", schema="gerrydb"
-    )
+    op.drop_index(op.f("ix_gerrydb_plan_set_version_id"), table_name="plan", schema="gerrydb")
     op.drop_index(op.f("ix_gerrydb_plan_path"), table_name="plan", schema="gerrydb")
-    op.drop_index(
-        op.f("ix_gerrydb_plan_namespace_id"), table_name="plan", schema="gerrydb"
-    )
+    op.drop_index(op.f("ix_gerrydb_plan_namespace_id"), table_name="plan", schema="gerrydb")
     op.drop_table("plan", schema="gerrydb")

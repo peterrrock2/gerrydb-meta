@@ -22,8 +22,6 @@ from gerrydb_meta.api.base import (
     geo_set_from_paths,
     geos_from_paths,
 )
-from gerrydb_meta.scopes import ScopeManager
-from gerrydb_meta.render import graph_to_gpkg
 from gerrydb_meta.api.deps import (
     can_read_localities,
     get_db,
@@ -32,6 +30,8 @@ from gerrydb_meta.api.deps import (
     get_scopes,
     get_user,
 )
+from gerrydb_meta.render import graph_to_gpkg
+from gerrydb_meta.scopes import ScopeManager
 
 GPKG_MEDIA_TYPE = "application/geopackage+sqlite3"
 
@@ -58,9 +58,7 @@ def create_graph(
     start = time.perf_counter()
     namespace_obj = crud.namespace.get(db=db, path=namespace)
 
-    if namespace_obj is None or not scopes.can_write_derived_in_namespace(
-        namespace_obj
-    ):
+    if namespace_obj is None or not scopes.can_write_derived_in_namespace(namespace_obj):
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(
@@ -87,9 +85,7 @@ def create_graph(
     edge_geo_paths = list(
         set(edge[0] for edge in obj_in.edges) | set(edge[1] for edge in obj_in.edges)
     )
-    edge_geos = geos_from_paths(
-        paths=edge_geo_paths, namespace=namespace, db=db, scopes=scopes
-    )
+    edge_geos = geos_from_paths(paths=edge_geo_paths, namespace=namespace, db=db, scopes=scopes)
     edge_geos_by_path = dict(zip(edge_geo_paths, edge_geos))
 
     log.debug("Time to get edge_geos: %s", time.perf_counter() - start)
@@ -121,9 +117,7 @@ def all_graphs(
     scopes: ScopeManager = Depends(get_scopes),
 ):
     graph_namespace_obj = crud.namespace.get(db=db, path=namespace)
-    if graph_namespace_obj is None or not scopes.can_read_in_namespace(
-        graph_namespace_obj
-    ):
+    if graph_namespace_obj is None or not scopes.can_read_in_namespace(graph_namespace_obj):
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(

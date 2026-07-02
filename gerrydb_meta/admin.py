@@ -12,23 +12,22 @@ from typing import Optional, Tuple
 
 import click
 from sqlalchemy.orm import Session as SessionType
+from uvicorn.config import logger as log
 
-from gerrydb_meta.enums import NamespaceGroup, ScopeType, GroupPermissions
 from gerrydb_meta.crud.obj_meta import obj_meta
+from gerrydb_meta.db import Session
+from gerrydb_meta.enums import GroupPermissions, NamespaceGroup, ScopeType
 from gerrydb_meta.models import (
     ApiKey,
+    Namespace,
     ObjectMeta,
     User,
-    UserScope,
     UserGroup,
     UserGroupMember,
-    Namespace,
     UserGroupScope,
+    UserScope,
 )
 from gerrydb_meta.schemas import ObjectMetaCreate
-from gerrydb_meta.db import Session
-from uvicorn.config import logger as log
-import os
 
 GERRYDB_SQL_ECHO = bool(os.environ.get("GERRYDB_SQL_ECHO", False))
 
@@ -63,9 +62,7 @@ def _generate_api_key() -> tuple[str, bytes]:
     test_key = "7w7uv9mi575n2dhlmg3wqba2imv1aqdys387tpbtpermujy1tuyqbxetygx8u3fr"
     redraws = 0
     while key == test_key and redraws < 3:  # pragma: no cover
-        key = "".join(
-            secrets.choice(API_KEY_CHARS) for _ in range(64)
-        )  # pragma: no cover
+        key = "".join(secrets.choice(API_KEY_CHARS) for _ in range(64))  # pragma: no cover
         redraws += 1  # pragma: no cover
 
     if redraws >= 3:  # pragma: no cover
@@ -189,9 +186,7 @@ class GerryAdmin:
         """
 
         if self.session.query(User).count() > 0:
-            raise ValueError(
-                "Cannot create the first user in the database (users already exist)."
-            )
+            raise ValueError("Cannot create the first user in the database (users already exist).")
 
         if self.session.query(UserGroup).count() > 0:  # pragma: no cover
             raise ValueError(  # pragma: no cover
@@ -382,9 +377,7 @@ class GerryAdmin:
         return user_group
 
     def user_group_find_by_name(self, name: str) -> Optional[UserGroup]:
-        user_group = (
-            self.session.query(UserGroup).filter(UserGroup.name == name).first()
-        )
+        user_group = self.session.query(UserGroup).filter(UserGroup.name == name).first()
         if user_group is None:
             raise ValueError(f"No user group found with name {name}.")
         log.info("Found %s.", user_group)
@@ -542,9 +535,7 @@ def user_create(user_email, name, group_perm, creator_email):
         creator = admin.user_find_by_email(creator_email)
         validate_admin(admin.session, creator)
 
-        user = admin.user_create(
-            email=user_email, name=name, group_perm=gp_enum, creator=creator
-        )
+        user = admin.user_create(email=user_email, name=name, group_perm=gp_enum, creator=creator)
         raw_key = admin.key_create(user)
         print(f"New API key for new {user}: {raw_key}")
 
@@ -571,9 +562,7 @@ def usergroup_create(name: str, description: str, creator_email: str):
             user=creator,
         )
 
-        user_group = admin.user_group_create(
-            name=name, description=description, meta=meta_obj
-        )
+        user_group = admin.user_group_create(name=name, description=description, meta=meta_obj)
         print(f"New user group: {user_group}")
 
 
@@ -616,9 +605,9 @@ def user_grant(
     namespace_group: Optional[str],
 ):
     scopes = [scope_type_dict[s] for s in scope]
-    assert (namespace is None) ^ (
-        namespace_group is None
-    ), "Must specify exactly one of namespace or namespace group."
+    assert (namespace is None) ^ (namespace_group is None), (
+        "Must specify exactly one of namespace or namespace group."
+    )
 
     with admin_context() as admin:
         user = admin.user_find_by_email(user_email)
@@ -713,9 +702,9 @@ def usergroup_grant(
     group: str, scope: str, creator_email: str, namespace: str, namespace_group: str
 ):
     scopes = [scope_type_dict[s] for s in scope]
-    assert (namespace is None) ^ (
-        namespace_group is None
-    ), "Must specify exactly one of namespace or namespace group."
+    assert (namespace is None) ^ (namespace_group is None), (
+        "Must specify exactly one of namespace or namespace group."
+    )
 
     with admin_context() as admin:
         creator = admin.user_find_by_email(creator_email)
@@ -790,9 +779,7 @@ def bulk_user_create(roster_path: Path, keys_path: Path, creator_email: str):
                 meta_obj=meta_obj,
             )
             raw_key = admin.key_create(user)
-            accounts.append(
-                {"name": user.name, "email": user.email, "key": str(raw_key)}
-            )
+            accounts.append({"name": user.name, "email": user.email, "key": str(raw_key)})
 
     print(f"Generated {len(accounts)} new accounts.")
     with open(keys_path, "w", newline="") as keys_fp:

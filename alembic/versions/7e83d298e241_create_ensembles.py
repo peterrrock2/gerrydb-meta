@@ -88,15 +88,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(
-        op.f("ix_gerrydb_ensemble_path"), table_name="ensemble", schema="gerrydb"
-    )
+    op.drop_index(op.f("ix_gerrydb_ensemble_path"), table_name="ensemble", schema="gerrydb")
     op.drop_index(
         op.f("ix_gerrydb_ensemble_namespace_id"),
         table_name="ensemble",
         schema="gerrydb",
     )
-    op.drop_index(
-        op.f("ix_gerrydb_ensemble_graph_id"), table_name="ensemble", schema="gerrydb"
-    )
+    op.drop_index(op.f("ix_gerrydb_ensemble_graph_id"), table_name="ensemble", schema="gerrydb")
     op.drop_table("ensemble", schema="gerrydb")

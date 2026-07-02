@@ -2,6 +2,7 @@
 
 import os
 import re
+import time
 from hashlib import sha512
 from http import HTTPStatus
 from typing import Generator
@@ -10,14 +11,12 @@ from uuid import UUID
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
+from uvicorn.config import logger as log
 
 from gerrydb_meta import crud, models
 from gerrydb_meta.db import db_url, ogr2ogr_db_config
 from gerrydb_meta.enums import ScopeType
 from gerrydb_meta.scopes import ScopeManager
-from uvicorn.config import logger as log
-import time
-import os
 
 GERRYDB_SQL_ECHO = bool(os.environ.get("GERRYDB_SQL_ECHO", False))
 
@@ -45,26 +44,18 @@ def get_user(
 ) -> models.User:
     """Retrieves the user associated with an API key."""
     if x_api_key is None:
-        raise HTTPException(
-            status_code=HTTPStatus.UNAUTHORIZED, detail="API key required."
-        )
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="API key required.")
 
     key_raw = x_api_key.lower()
     if re.match(API_KEY_PATTERN, key_raw) is None:
-        raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST, detail="Invalid API key format."
-        )
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="Invalid API key format.")
 
     key_hash = sha512(key_raw.encode("utf-8")).digest()
     api_key = crud.api_key.get(db=db, id=key_hash)
     if api_key is None:
-        raise HTTPException(
-            status_code=HTTPStatus.UNAUTHORIZED, detail="Unknown API key."
-        )
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Unknown API key.")
     if not api_key.active:
-        raise HTTPException(
-            status_code=HTTPStatus.UNAUTHORIZED, detail="API key is not active."
-        )
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="API key is not active.")
     return api_key.user
 
 
@@ -120,9 +111,7 @@ def get_geo_import(
 ) -> models.ObjectMeta:
     """Retrieves the geographic import metadata referenced in a request header."""
     if x_gerrydb_geo_import_id is None:
-        raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST, detail="GeoImport ID required."
-        )
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="GeoImport ID required.")
 
     try:
         geo_import_uuid = UUID(x_gerrydb_geo_import_id)
@@ -157,9 +146,7 @@ def global_scope_check(scope: ScopeType, message: str):
 
     def dependency(scopes: ScopeManager = Depends(get_scopes)):
         if not scopes.has_global_scope(scope):
-            raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN, detail=no_perms(message)
-            )
+            raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail=no_perms(message))
 
     return dependency
 
@@ -167,6 +154,4 @@ def global_scope_check(scope: ScopeType, message: str):
 can_read_localities = global_scope_check(ScopeType.LOCALITY_READ, "read localities")
 can_write_localities = global_scope_check(ScopeType.LOCALITY_WRITE, "write localities")
 can_write_meta = global_scope_check(ScopeType.META_WRITE, "write metadata")
-can_create_namespace = global_scope_check(
-    ScopeType.NAMESPACE_CREATE, "create namespaces"
-)
+can_create_namespace = global_scope_check(ScopeType.NAMESPACE_CREATE, "create namespaces")

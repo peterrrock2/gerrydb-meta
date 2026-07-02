@@ -1,21 +1,21 @@
 """CRUD operations and transformations for geographic imports."""
 
+import binascii
+import hashlib
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Collection
-from shapely.geometry import Polygon
-import hashlib
-import binascii
 
 from geoalchemy2.elements import WKBElement, WKTElement
-from sqlalchemy import and_, insert, or_, update, select, func
+from shapely.geometry import Polygon
+from sqlalchemy import and_, func, insert, or_, select, update
 from sqlalchemy.orm import Session
+from uvicorn.config import logger as log
 
 from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.exceptions import BulkCreateError, BulkPatchError
-from uvicorn.config import logger as log
 
 
 class CRGeography(NamespacedCRBase[models.Geography, None]):
@@ -71,9 +71,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                 paths=[path for path in paths if paths.count(path) > 1],
             )
 
-        existing_geos = self.__get_existing_geos(
-            db=db, obj_paths=paths, namespace=namespace
-        )
+        existing_geos = self.__get_existing_geos(db=db, obj_paths=paths, namespace=namespace)
 
         if existing_geos:
             raise BulkCreateError(
@@ -96,9 +94,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
             ).where(func.encode(models.GeoBin.geometry_hash, "hex").in_(hash_keys))
         ).all()
 
-        existing_hsh_to_bin_dict = {
-            row.geom_hex: row.GeoBin.geo_bin_id for row in results
-        }
+        existing_hsh_to_bin_dict = {row.geom_hex: row.GeoBin.geo_bin_id for row in results}
 
         return (
             existing_hsh_to_bin_dict,
@@ -167,9 +163,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
         objs_in: list[schemas.GeographyBase],
     ) -> tuple[dict[str, int], dict[str, str]]:
         empty_polygon_wkb = Polygon().wkb
-        empty_poly_hash = hashlib.md5(
-            WKBElement(empty_polygon_wkb, srid=4269).data
-        ).hexdigest()
+        empty_poly_hash = hashlib.md5(WKBElement(empty_polygon_wkb, srid=4269).data).hexdigest()
 
         hash_obj_dict = {}
 
@@ -184,9 +178,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
             else:
                 hash_obj_dict[new_hash].append(obj_in)
 
-        hash_bin_dict, missing_hashes = self.__get_missing_geo_bins(
-            db=db, hash_dict=hash_obj_dict
-        )
+        hash_bin_dict, missing_hashes = self.__get_missing_geo_bins(db=db, hash_dict=hash_obj_dict)
         if missing_hashes:
             hash_bin_dict = self.__insert_missing_geo_hashes(
                 db=db,
@@ -195,9 +187,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                 missing_hashes=missing_hashes,
             )
 
-        path_hash_dict = {
-            o.path: hsh for hsh, objs_lst in hash_obj_dict.items() for o in objs_lst
-        }
+        path_hash_dict = {o.path: hsh for hsh, objs_lst in hash_obj_dict.items() for o in objs_lst}
 
         # The following error should never fire. If it does, really bad things have happened.
         try:
@@ -205,9 +195,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
             assert len(path_hash_dict) == len(objs_in)
         except AssertionError as ex:  # pragma: no cover
             log.exception(ex)
-            raise BulkCreateError(
-                "Unexpected error when creating geometry hashes."
-            ) from ex
+            raise BulkCreateError("Unexpected error when creating geometry hashes.") from ex
 
         return hash_bin_dict, path_hash_dict
 
@@ -317,9 +305,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                 namespace=namespace,
             )
 
-            hash_bin_dict, path_hash_dict = self.__update_geo_hashes(
-                db=db, objs_in=objs_in
-            )
+            hash_bin_dict, path_hash_dict = self.__update_geo_hashes(db=db, objs_in=objs_in)
 
             geo_id_to_version_dict = self.__insert_geo_versions(
                 db=db,
@@ -332,9 +318,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
             etag = self._update_etag(db, namespace)
         db.flush()
 
-        return [
-            (geo, geo_id_to_version_dict[geo.geo_id]) for geo in path_geos_dict.values()
-        ], etag
+        return [(geo, geo_id_to_version_dict[geo.geo_id]) for geo in path_geos_dict.values()], etag
 
     def __validate_patch_geos(
         self,
@@ -353,9 +337,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                 paths=[path for path in paths if paths.count(path) > 1],
             )
 
-        existing_geos = self.__get_existing_geos(
-            db=db, obj_paths=paths, namespace=namespace
-        )
+        existing_geos = self.__get_existing_geos(db=db, obj_paths=paths, namespace=namespace)
 
         if len(existing_geos) < len(paths):
             missing = set(paths) - set(geo.path for geo in existing_geos)
@@ -393,9 +375,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
         allow_empty_polys: bool,
     ) -> dict[str, str]:
         empty_polygon_wkb = Polygon().wkb
-        empty_hash = hashlib.md5(
-            WKBElement(empty_polygon_wkb, srid=4269).data
-        ).hexdigest()
+        empty_hash = hashlib.md5(WKBElement(empty_polygon_wkb, srid=4269).data).hexdigest()
 
         new_path_hash_set = set({})
 
@@ -405,9 +385,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                 if obj_in.geography
                 else empty_hash
             )
-            new_path_hash_set.add(
-                (normalize_path(obj_in.path, case_sensitive_uid=True), new_hash)
-            )
+            new_path_hash_set.add((normalize_path(obj_in.path, case_sensitive_uid=True), new_hash))
 
         old_path_hash_set = set(
             (pair[0], pair[1].hex())
@@ -425,17 +403,14 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                     models.Geography.namespace_id == namespace.namespace_id,
                     models.GeoVersion.valid_to.is_(None),
                     models.Geography.path.in_(
-                        normalize_path(obj.path, case_sensitive_uid=True)
-                        for obj in objs_in
+                        normalize_path(obj.path, case_sensitive_uid=True) for obj in objs_in
                     ),
                 )
                 .all()
             )
         )
 
-        assert set(dict(old_path_hash_set).keys()) == set(
-            dict(new_path_hash_set).keys()
-        )
+        assert set(dict(old_path_hash_set).keys()) == set(dict(new_path_hash_set).keys())
 
         diff_set = new_path_hash_set - old_path_hash_set
         if any([pair[1] == empty_hash for pair in diff_set]) and not allow_empty_polys:
@@ -516,9 +491,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
             etag = self._update_etag(db, namespace)
         db.flush()
 
-        return [
-            (geo, geo_id_to_version_dict[geo.geo_id]) for geo in existing_geos
-        ], etag
+        return [(geo, geo_id_to_version_dict[geo.geo_id]) for geo in existing_geos], etag
 
     # TODO: Finish this method
     def __validate_upsert_geos(
@@ -535,9 +508,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
         # Need to check for unique paths since otherwise the db will just
         # insert the first occurrence which could be confusing. (This error
         # should almost never be raised in practice.)
-        paths = [
-            normalize_path(obj_in.path, case_sensitive_uid=True) for obj_in in objs_in
-        ]
+        paths = [normalize_path(obj_in.path, case_sensitive_uid=True) for obj_in in objs_in]
         if len(paths) != len(set(paths)):
             raise BulkPatchError(
                 "Cannot create or update geographies with duplicate paths.",
@@ -564,9 +535,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
         obj_meta: models.ObjectMeta,
         geo_import: models.GeoImport,
         namespace: models.Namespace,
-    ) -> tuple[
-        list[tuple[models.Geography, models.GeoVersion]], uuid.UUID
-    ]:  # pragma: no cover
+    ) -> tuple[list[tuple[models.Geography, models.GeoVersion]], uuid.UUID]:  # pragma: no cover
         """Updates geographies in bulk."""
         _ = self.__validate_upsert_geos(
             db=db,
@@ -593,9 +562,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
             namespace=target_namespace,
         )
 
-        log.debug(
-            f"Forking geographies from {source_namespace} to " f"{target_namespace}"
-        )
+        log.debug(f"Forking geographies from {source_namespace} to {target_namespace}")
         log.debug(f"Need to create geos: {create_geos_path_hash}")
 
         valid_from = datetime.now(timezone.utc)
@@ -611,15 +578,9 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
 
             hash_bin_dict = {
                 k.hex(): v
-                for k, v in db.query(
-                    models.GeoBin.geometry_hash, models.GeoBin.geo_bin_id
-                ).filter(
+                for k, v in db.query(models.GeoBin.geometry_hash, models.GeoBin.geo_bin_id).filter(
                     models.GeoBin.geometry_hash.in_(
-                        list(
-                            map(
-                                lambda x: binascii.unhexlify(x), path_hash_dict.values()
-                            )
-                        )
+                        list(map(lambda x: binascii.unhexlify(x), path_hash_dict.values()))
                     )
                 )
             }
@@ -636,9 +597,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
             etag = self._update_etag(db, target_namespace)
         db.flush()
 
-        return [
-            (geo, geo_id_to_version_dict[geo.geo_id]) for geo in path_geos_dict.values()
-        ], etag
+        return [(geo, geo_id_to_version_dict[geo.geo_id]) for geo in path_geos_dict.values()], etag
 
     def get(
         self, db: Session, *, path: str, namespace: models.Namespace

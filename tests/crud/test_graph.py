@@ -1,8 +1,9 @@
 import networkx as nx
+import pytest
+from shapely import Point, Polygon
+
 from gerrydb_meta import crud, schemas
 from gerrydb_meta.exceptions import CreateValueError
-from shapely import Point, Polygon
-import pytest
 
 square_corners = [(-1, -1), (1, -1), (1, 1), (-1, 1)]
 
@@ -98,9 +99,7 @@ def test_crud_graph_create(db_with_meta):
                 for (a, b), attr in grid_graph.edges.items()
             ],
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={"central": geo[0][0], "western": geo[1][0]},
         obj_meta=meta,
         namespace=ns,
@@ -405,9 +404,7 @@ def test_crud_graph_get(db_with_meta):
                 for (a, b), attr in grid_graph.edges.items()
             ],
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={"central": geo[0][0], "western": geo[1][0]},
         obj_meta=meta,
         namespace=ns,

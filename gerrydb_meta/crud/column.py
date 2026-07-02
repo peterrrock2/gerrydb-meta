@@ -4,19 +4,16 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Collection, Tuple
 
-from sqlalchemy import exc, insert, update, tuple_
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import exc, insert, select, tuple_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from uvicorn.config import logger as log
 
 from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.enums import ColumnType
 from gerrydb_meta.exceptions import ColumnValueTypeError, CreateValueError
 from gerrydb_meta.utils import create_column_value_partition_text
-from uvicorn.config import logger as log
 
 # Maps the `ColumnType` enum to columns in `ColumnValue`.
 COLUMN_TYPE_TO_VALUE_COLUMN = {
@@ -68,9 +65,7 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
                 namespace_id=namespace.namespace_id,
                 meta_id=obj_meta.meta_id,
                 description=obj_in.description,
-                source_url=(
-                    str(obj_in.source_url) if obj_in.source_url is not None else None
-                ),
+                source_url=(str(obj_in.source_url) if obj_in.source_url is not None else None),
                 kind=obj_in.kind,
                 type=obj_in.type,
             )
@@ -239,9 +234,7 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
                 old_row_pairs.add((item.geo_id, item.val_bool))
             else:  # pragma: no cover
                 # TODO: If this ever happens, add something that pings an admin.
-                assert (
-                    False
-                ), "Critical Error: No column value found."  # This should never happen
+                assert False, "Critical Error: No column value found."  # This should never happen
 
         geo_ids_to_insert = set(rows_dict.keys())
         if old_row_pairs != set():
@@ -344,9 +337,7 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
                 db.flush()  # Try to commit this alias
             except IntegrityError:  # pragma: no cover
                 db.rollback()  # Rollback only this failed insert
-                log.error(
-                    f"Failed to add alias {alias_path} for column {col.col_id}. Skipping."
-                )
+                log.error(f"Failed to add alias {alias_path} for column {col.col_id}. Skipping.")
 
 
 column = CRColumn(models.DataColumn)

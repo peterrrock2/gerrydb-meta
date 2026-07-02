@@ -1,7 +1,8 @@
+import pytest
+
 from gerrydb_meta import crud, schemas
 from gerrydb_meta.enums import ColumnKind, ColumnType
 from gerrydb_meta.exceptions import CreateValueError
-import pytest
 
 
 def make_atlantis_ns(db, meta):
@@ -155,9 +156,7 @@ def test_view_template_get(db_with_meta):
         namespace=ns,
     )
 
-    retrieved_view = crud.view_template.get(
-        db=db, path="mayor_power_template", namespace=ns
-    )
+    retrieved_view = crud.view_template.get(db=db, path="mayor_power_template", namespace=ns)
 
     assert retrieved_view.template_version_id == view.template_version_id
     assert retrieved_view.template_id == view.template_id
@@ -263,8 +262,7 @@ def test_view_template_error_duplicate_columns(db_with_meta, caplog):
     with pytest.raises(
         CreateValueError,
         match=(
-            "in column set 'city_set' "
-            "that was previously added or appears in another column set."
+            "in column set 'city_set' that was previously added or appears in another column set."
         ),
     ):
         _ = crud.view_template.create(

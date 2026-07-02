@@ -1,14 +1,15 @@
-import logging
-import pytest
-from shapely import Polygon, Point
-from fastapi import HTTPException
 import hashlib
+import logging
 from datetime import datetime, timezone
+
+import pytest
+from fastapi import HTTPException
+from shapely import Point, Polygon
 
 import gerrydb_meta.crud as crud
 import gerrydb_meta.schemas as schemas
 from gerrydb_meta.api.deps import get_scopes
-from gerrydb_meta.api.geography.list_geos import all_paths, GetMode
+from gerrydb_meta.api.geography.list_geos import GetMode, all_paths
 
 
 def test_full_list(ctx_no_scopes, caplog, me_2010_gdf):
@@ -125,8 +126,7 @@ def test_full_list(ctx_no_scopes, caplog, me_2010_gdf):
 
     assert set(path_hash_dict.keys()) == set(me_2010_gdf.index)
     assert set(path_hash_dict.values()) == {
-        hashlib.md5(row.geometry.wkb).hexdigest()
-        for row in new_me_2010_gdf.itertuples()
+        hashlib.md5(row.geometry.wkb).hexdigest() for row in new_me_2010_gdf.itertuples()
     }
 
     new_me_2010_gdf["geometry"] = [Polygon() for _ in range(len(new_me_2010_gdf))]
@@ -160,8 +160,7 @@ def test_full_list(ctx_no_scopes, caplog, me_2010_gdf):
 
     assert set(path_hash_dict.keys()) == set(me_2010_gdf.index)
     assert set(path_hash_dict.values()) == {
-        hashlib.md5(row.geometry.wkb).hexdigest()
-        for row in new_me_2010_gdf.itertuples()
+        hashlib.md5(row.geometry.wkb).hexdigest() for row in new_me_2010_gdf.itertuples()
     }
 
     # Check that being valid at a specific time returns the correct hashes

@@ -87,11 +87,7 @@ def revoke_scope_type(
     scope: enums.ScopeType,
 ) -> None:
     """Revokes all scopes of type `scope` for a test user."""
-    user = (
-        user_or_meta.user
-        if isinstance(user_or_meta, models.ObjectMeta)
-        else user_or_meta
-    )
+    user = user_or_meta.user if isinstance(user_or_meta, models.ObjectMeta) else user_or_meta
     db.query(models.UserScope).filter(
         models.UserScope.scope == scope, models.UserScope.user_id == user.user_id
     ).delete()

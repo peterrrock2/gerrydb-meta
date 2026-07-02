@@ -26,10 +26,9 @@ from gerrydb_meta.api.deps import (
     get_scopes,
     get_user,
 )
+from gerrydb_meta.exceptions import ViewConflictError
 from gerrydb_meta.render import view_to_gpkg
 from gerrydb_meta.scopes import ScopeManager
-from gerrydb_meta.exceptions import ViewConflictError
-
 
 router = APIRouter()
 GPKG_MEDIA_TYPE = "application/geopackage+sqlite3"
@@ -51,9 +50,7 @@ def create_view(
     scopes: ScopeManager = Depends(get_scopes),
 ):
     view_namespace_obj = crud.namespace.get(db=db, path=namespace)
-    if view_namespace_obj is None or not scopes.can_write_derived_in_namespace(
-        view_namespace_obj
-    ):
+    if view_namespace_obj is None or not scopes.can_write_derived_in_namespace(view_namespace_obj):
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(
@@ -64,9 +61,7 @@ def create_view(
 
     locality_obj = crud.locality.get_by_ref(db=db, path=obj_in.locality)
     if locality_obj is None:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail="Locality not found."
-        )
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Locality not found.")
 
     layer_namespace, layer_path = parse_path(obj_in.layer)
     template_namespace, template_path = parse_path(obj_in.template)
@@ -90,28 +85,18 @@ def create_view(
         db, path=template_path, namespace=namespace_objs["template"]
     )
     if template_obj is None:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail="View template not found."
-        )
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="View template not found.")
 
-    layer_obj = crud.geo_layer.get(
-        db, path=layer_path, namespace=namespace_objs["layer"]
-    )
+    layer_obj = crud.geo_layer.get(db, path=layer_path, namespace=namespace_objs["layer"])
     if layer_obj is None:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail="Geographic layer not found."
-        )
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Geographic layer not found.")
 
     if graph_path is None:
         graph_obj = None
     else:
-        graph_obj = crud.graph.get(
-            db, path=graph_path, namespace=namespace_objs["graph"]
-        )
+        graph_obj = crud.graph.get(db, path=graph_path, namespace=namespace_objs["graph"])
         if graph_obj is None:
-            raise HTTPException(
-                status_code=HTTPStatus.NOT_FOUND, detail="Dual graph not found."
-            )
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Dual graph not found.")
 
     try:
         view_obj, etag = crud.view.create(
@@ -151,9 +136,7 @@ def get_view(
     view itself.
     """
     view_namespace_obj = crud.namespace.get(db=db, path=namespace)
-    if view_namespace_obj is None or not scopes.can_read_in_namespace(
-        view_namespace_obj
-    ):
+    if view_namespace_obj is None or not scopes.can_read_in_namespace(view_namespace_obj):
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(
@@ -187,9 +170,7 @@ def all_views(
     scopes: ScopeManager = Depends(get_scopes),
 ):
     view_namespace_obj = crud.namespace.get(db=db, path=namespace)
-    if view_namespace_obj is None or not scopes.can_read_in_namespace(
-        view_namespace_obj
-    ):
+    if view_namespace_obj is None or not scopes.can_read_in_namespace(view_namespace_obj):
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(
@@ -221,9 +202,7 @@ def render_view(
 ):
     log.debug("TOP OF VIEW RENDER")
     view_namespace_obj = crud.namespace.get(db=db, path=namespace)
-    if view_namespace_obj is None or not scopes.can_read_in_namespace(
-        view_namespace_obj
-    ):
+    if view_namespace_obj is None or not scopes.can_read_in_namespace(view_namespace_obj):
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(

@@ -1,25 +1,23 @@
 """User-facing schemas for GerryDB objects."""
 
 from datetime import datetime
-from typing import Any
-from typing import Annotated, Optional, Mapping, Union
+from typing import Annotated, Any, Mapping, Optional, Union
 from uuid import UUID
+
 from pydantic import (
+    AliasPath,
     AnyUrl,
     BaseModel,
-    field_validator,
-    Field,
     ConfigDict,
-    AliasPath,
+    Field,
+    field_validator,
 )
 
 from gerrydb_meta import enums, models
 
 UserEmail = Annotated[
     str,
-    Field(
-        max_length=255, min_length=3, pattern=r"^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$"
-    ),
+    Field(max_length=255, min_length=3, pattern=r"^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$"),
 ]
 # / allowed at start. 1-2 segments. Used for objects that are not namespaced like
 # localities.
@@ -205,9 +203,7 @@ class ColumnPatch(BaseModel):
 class Column(ColumnBase):
     """A locality returned by the database."""
 
-    canonical_path: NamespacedGerryPath = Field(
-        alias=AliasPath("canonical_ref", "path")
-    )
+    canonical_path: NamespacedGerryPath = Field(alias=AliasPath("canonical_ref", "path"))
     namespace: NameStr = Field(alias=AliasPath("namespace", "path"))
     aliases: list[NameStr] = Field(alias=AliasPath("canonical_ref", "aliases"))
     meta: ObjectMeta
@@ -226,9 +222,7 @@ class Column(ColumnBase):
             aliases=[ref.path for ref in root_obj.refs if ref.path != canonical_path],
             kind=root_obj.kind,
             type=root_obj.type,
-            source_url=(
-                str(root_obj.source_url) if root_obj.source_url is not None else None
-            ),
+            source_url=(str(root_obj.source_url) if root_obj.source_url is not None else None),
         )
 
 
@@ -304,9 +298,7 @@ class GeographyBase(BaseModel):
     def check_bytes_type(cls, v, info):
         if v is not None and not isinstance(v, bytes):
             field_name = info.field_name
-            raise ValueError(
-                f"The {field_name} must be of type bytes, got type {type(v).__name__}"
-            )
+            raise ValueError(f"The {field_name} must be of type bytes, got type {type(v).__name__}")
         return v
 
 
@@ -336,9 +328,7 @@ class Geography(GeographyBase):
         return cls(
             namespace=obj.parent.namespace.path,
             geography=None if obj.geography is None else bytes(obj.geography.data),
-            internal_point=(
-                None if obj.internal_point is None else bytes(obj.internal_point.data)
-            ),
+            internal_point=(None if obj.internal_point is None else bytes(obj.internal_point.data)),
             path=obj.parent.path,
             meta=ObjectMeta.from_attributes(obj.parent.meta),
             valid_from=obj.valid_from,
@@ -522,8 +512,7 @@ class Graph(GraphMeta):
             meta=ObjectMeta.from_attributes(obj.meta),
             created_at=obj.created_at,
             edges=[
-                (edge.geo_1.full_path, edge.geo_2.full_path, edge.weights)
-                for edge in obj.edges
+                (edge.geo_1.full_path, edge.geo_2.full_path, edge.weights) for edge in obj.edges
             ],
         )
 
@@ -597,8 +586,7 @@ class Plan(PlanMeta):
         # of geography names for assignments with a lot of geographies.
         base_geos = {member.geo.full_path: None for member in obj.set_version.members}
         assignments = {
-            assignment.geo.full_path: assignment.assignment
-            for assignment in obj.assignments
+            assignment.geo.full_path: assignment.assignment for assignment in obj.assignments
         }
         return cls(
             path=obj.path,

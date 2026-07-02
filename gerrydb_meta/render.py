@@ -1,21 +1,21 @@
 """Extended GeoPackage rendering of views."""
 
-import sqlite3
-import subprocess
-import tempfile
-import uuid
-from pathlib import Path
 import os
 import shlex
+import sqlite3
+import subprocess
 import sys
+import tempfile
 import time
+import uuid
+from pathlib import Path
 
 import orjson as json
-
-from gerrydb_meta.crud.view import ViewRenderContext
-from gerrydb_meta.crud.graph import GraphRenderContext
-from gerrydb_meta.schemas import ObjectMeta, GraphMeta, ViewMeta
 from uvicorn.config import logger as log
+
+from gerrydb_meta.crud.graph import GraphRenderContext
+from gerrydb_meta.crud.view import ViewRenderContext
+from gerrydb_meta.schemas import GraphMeta, ObjectMeta, ViewMeta
 
 # For bulk exports, we wrap the command-line utility `ogr2ogr` (distributed with GDAL)
 # to generate a GeoPackage with geographies and tabular data directly from the
@@ -229,10 +229,7 @@ def _init_base_gpkg_extensions(conn: sqlite3.Connection, layer_name: str) -> Non
                 "gerrydb_view_meta",
                 None,
                 "mggg_gerrydb",
-                (
-                    "JSON-formatted metadata for the view's "
-                    "tabular, geographic, and graph data."
-                ),
+                ("JSON-formatted metadata for the view's tabular, geographic, and graph data."),
                 "read-write",
             ),
             (
@@ -289,9 +286,7 @@ def _init_gpkg_graph_extension(conn: sqlite3.Connection, layer_name: str):
     conn.commit()
 
 
-def _init_gpkg_plans_extension(
-    conn: sqlite3.Connection, layer_name: str, columns: list[str]
-):
+def _init_gpkg_plans_extension(conn: sqlite3.Connection, layer_name: str, columns: list[str]):
     """Initializes a plan assignments table in a GeoPackage."""
     table_columns = " TEXT,\n".join(columns) + " TEXT\n"
     conn.execute(
@@ -312,10 +307,7 @@ def _init_gpkg_plans_extension(
             "gerrydb_plan_assignment",
             None,
             "mggg_gerrydb",
-            (
-                "District assignments by geography for "
-                "districting plans associated with the view."
-            ),
+            ("District assignments by geography for districting plans associated with the view."),
             "read-write",
         ),
     )
@@ -382,9 +374,7 @@ def __run_subprocess(
         # to pass credentials to ogr2ogr instead of passing a raw connection string.
         stdout = ex.stdout.decode("utf-8") if ex.stdout else ""
         stderr = ex.stderr.decode("utf-8") if ex.stderr else ""
-        log.exception(
-            "Failed to export view with ogr2ogr. Query: %s", context.geo_query
-        )
+        log.exception("Failed to export view with ogr2ogr. Query: %s", context.geo_query)
         log.error("ogr2ogr stdout: %s", stdout)
         log.error("ogr2ogr stderr: %s", stderr)
         raise RenderError("Failed to render view: geography query failed.")
@@ -514,9 +504,7 @@ def __insert_geopackage_geometries(
     start = time.perf_counter()
     __validate_query(subprocess_command)
     __run_subprocess(context, subprocess_command_list)
-    log.debug(
-        "Running internal point query took %s seconds", time.perf_counter() - start
-    )
+    log.debug("Running internal point query took %s seconds", time.perf_counter() - start)
 
 
 def __update_geo_attrs_gpkg(
@@ -527,17 +515,13 @@ def __update_geo_attrs_gpkg(
     for db_id, meta in context.geo_meta.items():
         cur = conn.execute(
             "INSERT INTO gerrydb_geo_meta (value) VALUES (?)",
-            (
-                json.dumps(ObjectMeta.from_attributes(meta).model_dump()).decode(
-                    "utf-8"
-                ),
-            ),
+            (json.dumps(ObjectMeta.from_attributes(meta).model_dump()).decode("utf-8"),),
         )
         db_meta_id_to_gpkg_meta_id[db_id] = cur.lastrowid
 
-    assert (
-        context.geo_meta_ids.keys() == context.geo_valid_from_dates.keys()
-    ), "Geographic metadata IDs and valid dates must be aligned."
+    assert context.geo_meta_ids.keys() == context.geo_valid_from_dates.keys(), (
+        "Geographic metadata IDs and valid dates must be aligned."
+    )
 
     geo_attrs_dict = {}
     for path in context.geo_meta_ids.keys():
@@ -564,8 +548,7 @@ def __update_view_metadata_gpkg(
     # Create indices and references on paths.
     conn.execute(f"CREATE UNIQUE INDEX idx_geo_path ON {geo_layer_name}(path)")
     conn.execute(
-        "CREATE UNIQUE INDEX idx_internal_point_path "
-        f"ON {internal_point_layer_name}(path)"
+        f"CREATE UNIQUE INDEX idx_internal_point_path ON {internal_point_layer_name}(path)"
     )
 
     # Add extended (non-geographic) data.
@@ -585,14 +568,8 @@ def __update_view_metadata_gpkg(
     )
 
     conn.executemany(
-        (
-            "INSERT INTO gpkg_data_columns (table_name, column_name, description) "
-            "VALUES (?, ?, ?)"
-        ),
-        (
-            (geo_layer_name, alias, col.description)
-            for alias, col in context.columns.items()
-        ),
+        ("INSERT INTO gpkg_data_columns (table_name, column_name, description) VALUES (?, ?, ?)"),
+        ((geo_layer_name, alias, col.description) for alias, col in context.columns.items()),
     )
 
 
@@ -621,10 +598,7 @@ def __insert_plan_assignments(
     placeholders = ", ".join(["?"] * len(cols))
 
     conn.executemany(
-        (
-            f"INSERT INTO gerrydb_plan_assignment ({', '.join(cols)}) "
-            f"VALUES ({placeholders})"
-        ),
+        (f"INSERT INTO gerrydb_plan_assignment ({', '.join(cols)}) VALUES ({placeholders})"),
         ([getattr(row, col) for col in cols] for row in context.plan_assignments),
     )
 
@@ -662,9 +636,7 @@ def view_to_gpkg(context: ViewRenderContext, db_config: str) -> tuple[uuid.UUID,
         expected_count=context.view.num_geos,
     )
 
-    __update_view_metadata_gpkg(
-        conn, geo_layer_name, internal_point_layer_name, context
-    )
+    __update_view_metadata_gpkg(conn, geo_layer_name, internal_point_layer_name, context)
     __update_geo_attrs_gpkg(conn, context)
 
     start = time.perf_counter()
@@ -691,8 +663,7 @@ def __update_graph_metadata_gpkg(
 ):
     conn.execute(f"CREATE UNIQUE INDEX idx_geo_path ON {geo_layer_name}(path)")
     conn.execute(
-        "CREATE UNIQUE INDEX idx_internal_point_path "
-        f"ON {internal_point_layer_name}(path)"
+        f"CREATE UNIQUE INDEX idx_internal_point_path ON {internal_point_layer_name}(path)"
     )
 
     _init_base_graph_gpkg_extensions(conn, geo_layer_name)
@@ -711,9 +682,7 @@ def __update_graph_metadata_gpkg(
     )
 
 
-def graph_to_gpkg(
-    context: GraphRenderContext, db_config: str
-) -> tuple[uuid.UUID, Path]:
+def graph_to_gpkg(context: GraphRenderContext, db_config: str) -> tuple[uuid.UUID, Path]:
     render_uuid = uuid.uuid4()
     temp_dir = Path(tempfile.mkdtemp())
     gpkg_path = Path(temp_dir) / f"{render_uuid.hex}.gpkg"
@@ -743,9 +712,7 @@ def graph_to_gpkg(
         conn, geo_layer_name, internal_point_layer_name, type="graph"
     )
 
-    __update_graph_metadata_gpkg(
-        conn, geo_layer_name, internal_point_layer_name, context
-    )
+    __update_graph_metadata_gpkg(conn, geo_layer_name, internal_point_layer_name, context)
     __update_geo_attrs_gpkg(conn, context)
 
     start = time.perf_counter()

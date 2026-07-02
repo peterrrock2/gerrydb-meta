@@ -67,10 +67,7 @@ def test_api_column_value_set__bad_values(ctx_public_namespace_read_write, typed
 
     put_response = ctx.client.put(
         f"{COLUMNS_ROOT}/{namespace}/col",
-        json=[
-            {"path": f"/{namespace}/geo{idx}", "value": value}
-            for idx, value in enumerate(vals)
-        ],
+        json=[{"path": f"/{namespace}/geo{idx}", "value": value} for idx, value in enumerate(vals)],
     )
 
     err = put_response.json()
@@ -195,8 +192,6 @@ def test_api_column_value_set__update(ctx_public_namespace_read_write):
         f"{COLUMNS_ROOT}/{namespace}/col",
         json=[{"path": f"/{namespace}/geo", "value": 2}],
     )
-    assert (
-        put_again_response.status_code == HTTPStatus.NO_CONTENT
-    ), put_again_response.json()
+    assert put_again_response.status_code == HTTPStatus.NO_CONTENT, put_again_response.json()
 
     assert get_column_values(ctx, col_obj) == {"geo": 2}

@@ -61,9 +61,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("meta_id"),
         schema="gerrydb",
     )
-    op.create_index(
-        op.f("ix_gerrydb_meta_uuid"), "meta", ["uuid"], unique=True, schema="gerrydb"
-    )
+    op.create_index(op.f("ix_gerrydb_meta_uuid"), "meta", ["uuid"], unique=True, schema="gerrydb")
 
     # Create user group models.
     op.create_table(
@@ -236,9 +234,7 @@ def downgrade() -> None:
     op.drop_table("api_key", schema="gerrydb")
     op.drop_table("user_group_scope", schema="gerrydb")
     op.drop_table("user_scope", schema="gerrydb")
-    op.drop_index(
-        op.f("ix_gerrydb_namespace_path"), table_name="namespace", schema="gerrydb"
-    )
+    op.drop_index(op.f("ix_gerrydb_namespace_path"), table_name="namespace", schema="gerrydb")
     op.drop_table("namespace", schema="gerrydb")
     op.drop_table("user_group_member", schema="gerrydb")
     op.drop_table("user_group", schema="gerrydb")

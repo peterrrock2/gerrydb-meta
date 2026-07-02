@@ -1,9 +1,10 @@
-from shapely import Point, Polygon
 import logging
 
+from shapely import Point, Polygon
+
 from gerrydb_meta import crud, schemas
-from gerrydb_meta.main import API_PREFIX
 from gerrydb_meta.api.deps import get_scopes
+from gerrydb_meta.main import API_PREFIX
 
 PLAN_ROOT = f"{API_PREFIX}/plans"
 
@@ -93,9 +94,7 @@ def test_plan_create(ctx_superuser, caplog):
         obj_meta=meta,
     )
 
-    geo_set_version = crud.geo_layer.get_set_by_locality(
-        db=db, layer=geo_layer, locality=loc[0]
-    )
+    geo_set_version = crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0])
 
     ret = ctx_superuser.client.post(
         f"{API_PREFIX}/plans/bad_namespace",

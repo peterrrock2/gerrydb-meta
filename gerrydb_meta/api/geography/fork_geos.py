@@ -1,15 +1,17 @@
-from http import HTTPStatus
 import hashlib
-from shapely import Polygon
+from datetime import datetime, timezone
+from http import HTTPStatus
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
 from geoalchemy2 import WKBElement
-from typing import Optional
-from datetime import datetime, timezone
+from shapely import Polygon
+from sqlalchemy.orm import Session
+from uvicorn.config import logger as log
 
-from gerrydb_meta import crud
 import gerrydb_meta.models as models
+import gerrydb_meta.schemas as schemas
+from gerrydb_meta import crud
 from gerrydb_meta.api.deps import (
     can_read_localities,
     get_db,
@@ -17,9 +19,8 @@ from gerrydb_meta.api.deps import (
     get_user,
 )
 from gerrydb_meta.scopes import ScopeManager
-import gerrydb_meta.schemas as schemas
+
 from .list_geos import _get_path_hash_pairs
-from uvicorn.config import logger as log
 
 fork_router = APIRouter()
 
@@ -47,9 +48,7 @@ def __validate_source_and_target_namespaces(
     """
     source_namespace_obj = crud.namespace.get(db=db, path=source_namespace)
 
-    if source_namespace_obj is None or not scopes.can_read_in_namespace(
-        source_namespace_obj
-    ):
+    if source_namespace_obj is None or not scopes.can_read_in_namespace(source_namespace_obj):
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(
@@ -63,9 +62,7 @@ def __validate_source_and_target_namespaces(
     # We enforce that the target namespace is writeable, because the only
     # reason that you would want to check if you can fork from one namespace
     # to another is to check if you can write new things to the target namespace.
-    if target_namespace_obj is None or not scopes.can_write_in_namespace(
-        target_namespace_obj
-    ):
+    if target_namespace_obj is None or not scopes.can_write_in_namespace(target_namespace_obj):
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(
@@ -144,9 +141,7 @@ def __validate_forkability(
             ),
         )
 
-    if not allow_empty_polys and any(
-        [pair[1] == empty_hash for pair in source_geo_hash_pairs]
-    ):
+    if not allow_empty_polys and any([pair[1] == empty_hash for pair in source_geo_hash_pairs]):
         raise HTTPException(
             status_code=HTTPStatus.FORBIDDEN,
             detail=(
@@ -261,9 +256,7 @@ def check_forkability(
     (
         source_namespace_obj,
         target_namespace_obj,
-    ) = __validate_source_and_target_namespaces(
-        source_namespace, target_namespace, db, scopes
-    )
+    ) = __validate_source_and_target_namespaces(source_namespace, target_namespace, db, scopes)
 
     locality = crud.locality.get_by_ref(db=db, path=loc_ref)
     layer = crud.geo_layer.get(db=db, path=target_layer, namespace=target_namespace_obj)
@@ -271,17 +264,13 @@ def check_forkability(
     if locality is None:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
-            detail=(
-                f"Locality '{loc_ref}' not found in namespace '{target_namespace}'."
-            ),
+            detail=(f"Locality '{loc_ref}' not found in namespace '{target_namespace}'."),
         )
 
     if layer is None:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
-            detail=(
-                f"Layer '{target_layer}' not found in namespace '{target_namespace}'."
-            ),
+            detail=(f"Layer '{target_layer}' not found in namespace '{target_namespace}'."),
         )
 
     # Now check that you are migrating from a public namespace.
@@ -375,9 +364,7 @@ def fork_geos_between_namespaces(
     (
         source_namespace_obj,
         target_namespace_obj,
-    ) = __validate_source_and_target_namespaces(
-        source_namespace, target_namespace, db, scopes
-    )
+    ) = __validate_source_and_target_namespaces(source_namespace, target_namespace, db, scopes)
 
     locality = crud.locality.get_by_ref(db=db, path=loc_ref)
     layer = crud.geo_layer.get(db=db, path=target_layer, namespace=target_namespace_obj)
@@ -398,9 +385,7 @@ def fork_geos_between_namespaces(
     schema_meta_obj = schemas.ObjectMetaCreate(notes=notes)
     meta_obj = crud.obj_meta.create(db=db, obj_in=schema_meta_obj, user=user)
 
-    geo_import, _ = crud.geo_import.create(
-        db=db, obj_meta=meta_obj, namespace=target_namespace_obj
-    )
+    geo_import, _ = crud.geo_import.create(db=db, obj_meta=meta_obj, namespace=target_namespace_obj)
 
     geo_ret = crud.geography.fork_bulk(
         db=db,

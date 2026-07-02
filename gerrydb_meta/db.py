@@ -11,7 +11,7 @@ if os.getenv("INSTANCE_CONNECTION_NAME"):  # pragma: no cover
     username = os.environ["DB_USER"]
     password = urllib.parse.quote(os.environ["DB_PASS"])
     db_name = os.environ["DB_NAME"]
-    socket = f'/cloudsql/{os.environ["INSTANCE_CONNECTION_NAME"]}'
+    socket = f"/cloudsql/{os.environ['INSTANCE_CONNECTION_NAME']}"
     db_url = f"postgresql://{username}:{password}@/{db_name}?host={socket}"
     # For Cloud Run deployments, credentials are written to a connection service file
     # on app initialization.

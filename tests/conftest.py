@@ -3,12 +3,12 @@
 import os
 import pickle
 from pathlib import Path
-import networkx as nx
 
+import geopandas as gpd
+import networkx as nx
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-import geopandas as gpd
 
 from gerrydb_meta import models
 
@@ -18,9 +18,7 @@ DEFAULT_TEST_DATABASE_URI = "postgresql://postgres:test@localhost:54321"
 @pytest.fixture(scope="session")
 def db_engine():
     """SpatialLite-enabled SQLAlchemy engine."""
-    engine = create_engine(
-        os.getenv("GERRYDB_TEST_DATABASE_URI", DEFAULT_TEST_DATABASE_URI)
-    )
+    engine = create_engine(os.getenv("GERRYDB_TEST_DATABASE_URI", DEFAULT_TEST_DATABASE_URI))
     yield engine
     engine.dispose()
 
@@ -54,9 +52,7 @@ def db(db_schema):
 @pytest.fixture(scope="session")
 def me_2010_gdf():
     """`GeoDataFrame` of Maine 2010 Census blocks."""
-    pkl_path = (
-        Path(__file__).resolve().parent / "fixtures" / "23_county_all_geos_2010.pkl"
-    )
+    pkl_path = Path(__file__).resolve().parent / "fixtures" / "23_county_all_geos_2010.pkl"
 
     with open(pkl_path, "rb") as pkl_fp:
         gdf = pickle.load(pkl_fp)
@@ -66,11 +62,7 @@ def me_2010_gdf():
 
 @pytest.fixture(scope="session")
 def me_2010_column_tabluation():
-    pkl_path = (
-        Path(__file__).resolve().parent
-        / "fixtures"
-        / "tabular_config_geo_columns_2010.pkl"
-    )
+    pkl_path = Path(__file__).resolve().parent / "fixtures" / "tabular_config_geo_columns_2010.pkl"
 
     with open(pkl_path, "rb") as pkl_fp:
         gdf = pickle.load(pkl_fp)

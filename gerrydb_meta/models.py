@@ -10,34 +10,32 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
-    DateTime,
-    Index,
-)
-from sqlalchemy import Enum as SqlEnum
-from sqlalchemy import (
-    ForeignKey,
-    Integer,
     Column,
     Computed,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
     LargeBinary,
     MetaData,
     String,
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import BYTEA
+from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
-from sqlalchemy.ext.associationproxy import association_proxy
 
 from gerrydb_meta.enums import (
     ColumnKind,
     ColumnType,
+    GraphRenderStatus,
     NamespaceGroup,
     ScopeType,
     ViewRenderStatus,
-    GraphRenderStatus,
 )
 
 SCHEMA = "gerrydb"
@@ -53,17 +51,11 @@ class User(Base):
 
     user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    email: Mapped[str] = mapped_column(
-        String(254), nullable=False, unique=True, index=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    email: Mapped[str] = mapped_column(String(254), nullable=False, unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     scopes: Mapped[list["UserScope"]] = relationship("UserScope", lazy="joined")
-    groups: Mapped[list["UserGroupMember"]] = relationship(
-        "UserGroupMember", lazy="joined"
-    )
+    groups: Mapped[list["UserGroupMember"]] = relationship("UserGroupMember", lazy="joined")
     api_keys: Mapped[list["ApiKey"]] = relationship("ApiKey", back_populates="user")
 
     def __repr__(self):
@@ -76,9 +68,7 @@ class UserGroup(Base):
     group_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     scopes: Mapped[list["UserGroupScope"]] = relationship(
         "UserGroupScope", lazy="joined", uselist=True
@@ -95,15 +85,11 @@ class UserGroup(Base):
 class UserGroupMember(Base):
     __tablename__ = "user_group_member"
 
-    user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.user_id"), primary_key=True
-    )
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id"), primary_key=True)
     group_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("user_group.group_id"), primary_key=True
     )
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     user: Mapped[User] = relationship("User", lazy="joined", back_populates="groups")
     group = relationship("UserGroup", lazy="joined", back_populates="users")
@@ -115,19 +101,11 @@ class UserScope(Base):
     __table_args__ = (UniqueConstraint("user_id", "scope", "scope", "namespace_id"),)
 
     user_perm_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.user_id"), nullable=False
-    )
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id"), nullable=False)
     scope: Mapped[ScopeType] = mapped_column(SqlEnum(ScopeType), nullable=False)
-    namespace_group: Mapped[NamespaceGroup | None] = mapped_column(
-        SqlEnum(NamespaceGroup)
-    )
-    namespace_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("namespace.namespace_id")
-    )
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    namespace_group: Mapped[NamespaceGroup | None] = mapped_column(SqlEnum(NamespaceGroup))
+    namespace_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("namespace.namespace_id"))
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     user: Mapped[User] = relationship("User", back_populates="scopes")
     namespace: Mapped["Namespace"] = relationship("Namespace")
@@ -150,15 +128,9 @@ class UserGroupScope(Base):
         Integer, ForeignKey("user_group.group_id"), nullable=False
     )
     scope: Mapped[ScopeType] = mapped_column(SqlEnum(ScopeType), nullable=False)
-    namespace_group: Mapped[NamespaceGroup | None] = mapped_column(
-        SqlEnum(NamespaceGroup)
-    )
-    namespace_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("namespace.namespace_id")
-    )
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    namespace_group: Mapped[NamespaceGroup | None] = mapped_column(SqlEnum(NamespaceGroup))
+    namespace_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("namespace.namespace_id"))
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     group: Mapped[UserGroup] = relationship("UserGroup", back_populates="scopes")
     namespace: Mapped["Namespace"] = relationship("Namespace")
@@ -169,9 +141,7 @@ class ApiKey(Base):
     __tablename__ = "api_key"
 
     key_hash: Mapped[bytes] = mapped_column(LargeBinary, primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.user_id"), nullable=False
-    )
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -195,9 +165,7 @@ class ObjectMeta(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    created_by: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.user_id"), nullable=False
-    )
+    created_by: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id"), nullable=False)
 
     user: Mapped[User] = relationship("User")
 
@@ -209,9 +177,7 @@ class Namespace(Base):
     path: Mapped[str] = mapped_column(Text, nullable=False, unique=True, index=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     public: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")
 
@@ -231,12 +197,8 @@ class Locality(Base):
         index=True,
         nullable=False,
     )
-    parent_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("locality.loc_id")
-    )
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    parent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("locality.loc_id"))
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     default_proj: Mapped[str | None] = mapped_column(Text)
 
@@ -261,9 +223,7 @@ class LocalityRef(Base):
     ref_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     loc_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("locality.loc_id"))
     path: Mapped[str] = mapped_column(Text, unique=True, index=True, nullable=False)
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     loc: Mapped[Locality] = relationship(
         "Locality",
@@ -290,9 +250,7 @@ class GeoLayer(Base):
     )
     description: Mapped[str | None] = mapped_column(Text)
     source_url: Mapped[str | None] = mapped_column(String(2048))
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")
     namespace: Mapped[Namespace] = relationship("Namespace", lazy="joined")
@@ -310,19 +268,13 @@ class GeoSetVersion(Base):
     __tablename__ = "geo_set_version"
 
     set_version_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    layer_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("geo_layer.layer_id"), nullable=False
-    )
-    loc_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("locality.loc_id"), nullable=False
-    )
+    layer_id: Mapped[int] = mapped_column(Integer, ForeignKey("geo_layer.layer_id"), nullable=False)
+    loc_id: Mapped[int] = mapped_column(Integer, ForeignKey("locality.loc_id"), nullable=False)
     valid_from: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     valid_to: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     layer: Mapped[GeoLayer] = relationship("GeoLayer", lazy="joined")
     loc: Mapped[Locality] = relationship("Locality", lazy="joined")
@@ -338,33 +290,23 @@ class GeoSetVersion(Base):
 
 class GeoSetMember(Base):
     __tablename__ = "geo_set_member"
-    __table_args__ = (
-        Index("ix_geo_set_member_geo_id_set_version_id", "geo_id", "set_version_id"),
-    )
+    __table_args__ = (Index("ix_geo_set_member_geo_id_set_version_id", "geo_id", "set_version_id"),)
 
     set_version_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("geo_set_version.set_version_id"), primary_key=True
     )
-    geo_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("geography.geo_id"), primary_key=True
-    )
+    geo_id: Mapped[int] = mapped_column(Integer, ForeignKey("geography.geo_id"), primary_key=True)
 
-    set_version: Mapped[GeoSetVersion] = relationship(
-        "GeoSetVersion", back_populates="members"
-    )
+    set_version: Mapped[GeoSetVersion] = relationship("GeoSetVersion", back_populates="members")
     geo: Mapped["Geography"] = relationship("Geography", lazy="joined")
 
 
 class GeoBin(Base):
     __tablename__ = "geo_bin"
-    geo_bin_id: Mapped[int] = mapped_column(
-        Integer, primary_key=True, autoincrement=True
-    )
+    geo_bin_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     # We remove the spatial index from the geography column for now because we
     # are not checking interstections or anything like that with it for now.
-    geography = mapped_column(
-        SqlGeography(srid=4269, spatial_index=False), nullable=True
-    )
+    geography = mapped_column(SqlGeography(srid=4269, spatial_index=False), nullable=True)
     internal_point = mapped_column(
         SqlGeography(geometry_type="POINT", srid=4269, spatial_index=False),
         nullable=True,
@@ -406,12 +348,8 @@ class GeoVersion(Base):
     import_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("geo_import.import_id"), primary_key=True
     )
-    geo_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("geography.geo_id"), primary_key=True
-    )
-    valid_from: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    geo_id: Mapped[int] = mapped_column(Integer, ForeignKey("geography.geo_id"), primary_key=True)
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     valid_to: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     geo_bin_id = mapped_column(Integer, ForeignKey("geo_bin.geo_bin_id"), nullable=True)
 
@@ -431,18 +369,14 @@ class Geography(Base):
     namespace_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("namespace.namespace_id"), nullable=False
     )
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")
     namespace: Mapped[Namespace] = relationship("Namespace", lazy="joined")
     versions: Mapped[list[GeoVersion]] = relationship("GeoVersion")
 
     # Just a safety check to make sure that paths are unique within a namespace
-    __table_args__ = (
-        UniqueConstraint("path", "namespace_id", name="uq_geography_path_namespace"),
-    )
+    __table_args__ = (UniqueConstraint("path", "namespace_id", name="uq_geography_path_namespace"),)
 
     @property
     def full_path(self):  # pragma: no cover
@@ -464,15 +398,11 @@ class GeoImport(Base):
     namespace_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("namespace.namespace_id"), nullable=False
     )
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    created_by: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.user_id"), nullable=False
-    )
+    created_by: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id"), nullable=False)
 
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")
     namespace: Mapped[Namespace] = relationship("Namespace", lazy="joined")
@@ -487,12 +417,8 @@ class GeoHierarchy(Base):  # pragma: no cover
     parent_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("geography.geo_id"), primary_key=True
     )
-    child_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("geography.geo_id"), primary_key=True
-    )
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    child_id: Mapped[int] = mapped_column(Integer, ForeignKey("geography.geo_id"), primary_key=True)
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta")
 
@@ -522,12 +448,8 @@ class DataColumn(Base):
         Integer, ForeignKey("meta.meta_id"), nullable=False
     )  # pragma: no cover
 
-    meta: Mapped[ObjectMeta] = relationship(
-        "ObjectMeta", lazy="joined"
-    )  # pragma: no cover
-    namespace: Mapped[Namespace] = relationship(
-        "Namespace", lazy="joined"
-    )  # pragma: no cover
+    meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")  # pragma: no cover
+    namespace: Mapped[Namespace] = relationship("Namespace", lazy="joined")  # pragma: no cover
     canonical_ref = relationship(
         "ColumnRef",
         lazy="joined",
@@ -551,9 +473,7 @@ class ColumnRef(Base):
     )
     col_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("column.col_id"))
     path: Mapped[str] = mapped_column(Text, index=True, nullable=False)
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     namespace: Mapped[Namespace] = relationship("Namespace", lazy="joined")
     column: Mapped[DataColumn] = relationship(
@@ -579,9 +499,7 @@ class ColumnRelation(Base):
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     expr: Mapped[Any] = mapped_column(JSON, nullable=False)
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")
 
@@ -592,9 +510,7 @@ class ColumnRelationMember(Base):
     relation_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("column_relation.relation_id"), primary_key=True
     )
-    member_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("column.col_id"), primary_key=True
-    )
+    member_id: Mapped[int] = mapped_column(Integer, ForeignKey("column.col_id"), primary_key=True)
 
 
 class ColumnSet(Base):
@@ -607,14 +523,10 @@ class ColumnSet(Base):
         Integer, ForeignKey("namespace.namespace_id"), nullable=False
     )
     description: Mapped[str | None] = mapped_column(Text)
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")
-    columns: Mapped[list["ColumnSetMember"]] = relationship(
-        "ColumnSetMember", lazy="joined"
-    )
+    columns: Mapped[list["ColumnSetMember"]] = relationship("ColumnSetMember", lazy="joined")
     namespace: Mapped[Namespace] = relationship("Namespace", lazy="joined")
 
     def __repr__(self):  # pragma: no cover
@@ -624,12 +536,8 @@ class ColumnSet(Base):
 class ColumnSetMember(Base):
     __tablename__ = "column_set_member"
 
-    set_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("column_set.set_id"), primary_key=True
-    )
-    ref_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("column_ref.ref_id"), primary_key=True
-    )
+    set_id: Mapped[int] = mapped_column(Integer, ForeignKey("column_set.set_id"), primary_key=True)
+    ref_id: Mapped[int] = mapped_column(Integer, ForeignKey("column_ref.ref_id"), primary_key=True)
     order: Mapped[int] = mapped_column(Integer, nullable=False)
 
     set: Mapped[ColumnSet] = relationship("ColumnSet", back_populates="columns")
@@ -657,9 +565,7 @@ class ColumnValue(Base):
         nullable=False,
         primary_key=True,
     )
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
     valid_from: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -697,9 +603,7 @@ class Plan(Base):
     source_url: Mapped[str | None] = mapped_column(String(2048))  # e.g. from Districtr
     districtr_id: Mapped[str | None] = mapped_column(Text)
     daves_id: Mapped[str | None] = mapped_column(Text)
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
     # TODO: should plans be versioned?
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -708,9 +612,7 @@ class Plan(Base):
     namespace: Mapped[Namespace] = relationship("Namespace", lazy="joined")
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")
     set_version: Mapped[GeoSetVersion] = relationship("GeoSetVersion", lazy="joined")
-    assignments: Mapped[list["PlanAssignment"]] = relationship(
-        "PlanAssignment", lazy="joined"
-    )
+    assignments: Mapped[list["PlanAssignment"]] = relationship("PlanAssignment", lazy="joined")
 
     def __repr__(self):  # pragma: no cover
         return f"Plan(path={self.path}, num_districts={self.num_districts})"
@@ -719,12 +621,8 @@ class Plan(Base):
 class PlanAssignment(Base):
     __tablename__ = "plan_assignment"
 
-    plan_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("plan.plan_id"), primary_key=True
-    )
-    geo_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("geography.geo_id"), primary_key=True
-    )
+    plan_id: Mapped[int] = mapped_column(Integer, ForeignKey("plan.plan_id"), primary_key=True)
+    geo_id: Mapped[int] = mapped_column(Integer, ForeignKey("geography.geo_id"), primary_key=True)
     assignment: Mapped[str] = mapped_column(Text, nullable=False)
 
     geo: Mapped["Geography"] = relationship("Geography", lazy="joined")
@@ -746,9 +644,7 @@ class Graph(Base):
     )
     path: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -768,37 +664,23 @@ class Graph(Base):
 class GraphRender(Base):
     __tablename__ = "graph_render"
 
-    render_id: Mapped[UUID] = mapped_column(
-        postgresql.UUID(as_uuid=True), primary_key=True
-    )
-    graph_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("graph.graph_id"), nullable=False
-    )
+    render_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
+    graph_id: Mapped[int] = mapped_column(Integer, ForeignKey("graph.graph_id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    created_by: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.user_id"), nullable=False
-    )
+    created_by: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id"), nullable=False)
 
     path: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[GraphRenderStatus] = mapped_column(
-        SqlEnum(GraphRenderStatus), nullable=False
-    )
+    status: Mapped[GraphRenderStatus] = mapped_column(SqlEnum(GraphRenderStatus), nullable=False)
 
 
 class GraphEdge(Base):
     __tablename__ = "graph_edge"
 
-    graph_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("graph.graph_id"), primary_key=True
-    )
-    geo_id_1: Mapped[int] = mapped_column(
-        Integer, ForeignKey("geography.geo_id"), primary_key=True
-    )
-    geo_id_2: Mapped[int] = mapped_column(
-        Integer, ForeignKey("geography.geo_id"), primary_key=True
-    )
+    graph_id: Mapped[int] = mapped_column(Integer, ForeignKey("graph.graph_id"), primary_key=True)
+    geo_id_1: Mapped[int] = mapped_column(Integer, ForeignKey("geography.geo_id"), primary_key=True)
+    geo_id_2: Mapped[int] = mapped_column(Integer, ForeignKey("geography.geo_id"), primary_key=True)
     weights: Mapped[Any | None] = mapped_column(postgresql.JSONB)
 
     graph: Mapped[Graph] = relationship("Graph", overlaps="edges")
@@ -838,9 +720,7 @@ class Ensemble(Base):
     params: Mapped[dict | None] = mapped_column(postgresql.JSONB, nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
 
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -859,9 +739,7 @@ class ViewTemplate(Base):
     )
     path: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")
     namespace: Mapped[Namespace] = relationship("Namespace", lazy="joined")
@@ -874,13 +752,9 @@ class ViewTemplateVersion(Base):
     template_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("view_template.template_id"), nullable=False
     )
-    valid_from: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     valid_to: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")
     parent: Mapped[ViewTemplate] = relationship("ViewTemplate", lazy="joined")
@@ -901,9 +775,7 @@ class ViewTemplateColumnMember(Base):
         ForeignKey("view_template_version.template_version_id"),
         primary_key=True,
     )
-    ref_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("column_ref.ref_id"), primary_key=True
-    )
+    ref_id: Mapped[int] = mapped_column(Integer, ForeignKey("column_ref.ref_id"), primary_key=True)
     order: Mapped[int] = mapped_column(Integer, nullable=False)
 
     template_version: Mapped[ViewTemplate] = relationship(
@@ -920,9 +792,7 @@ class ViewTemplateColumnSetMember(Base):
         ForeignKey("view_template_version.template_version_id"),
         primary_key=True,
     )
-    set_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("column_set.set_id"), primary_key=True
-    )
+    set_id: Mapped[int] = mapped_column(Integer, ForeignKey("column_set.set_id"), primary_key=True)
     order: Mapped[int] = mapped_column(Integer, nullable=False)
 
     template_version: Mapped[ViewTemplate] = relationship(
@@ -961,19 +831,13 @@ class View(Base):
     template_version_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("view_template_version.template_version_id"), nullable=False
     )
-    loc_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("locality.loc_id"), nullable=False
-    )
-    layer_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("geo_layer.layer_id"), nullable=False
-    )
+    loc_id: Mapped[int] = mapped_column(Integer, ForeignKey("locality.loc_id"), nullable=False)
+    layer_id: Mapped[int] = mapped_column(Integer, ForeignKey("geo_layer.layer_id"), nullable=False)
     at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     proj: Mapped[str | None] = mapped_column(Text)
-    meta_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("meta.meta_id"), nullable=False
-    )
+    meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
     graph_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("graph.graph_id"), nullable=True
     )
@@ -997,23 +861,15 @@ class View(Base):
 class ViewRender(Base):
     __tablename__ = "view_render"
 
-    render_id: Mapped[UUID] = mapped_column(
-        postgresql.UUID(as_uuid=True), primary_key=True
-    )
-    view_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("view.view_id"), nullable=False
-    )
+    render_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
+    view_id: Mapped[int] = mapped_column(Integer, ForeignKey("view.view_id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    created_by: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.user_id"), nullable=False
-    )
+    created_by: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id"), nullable=False)
     # e.g. local filesystem, S3, ...
     path: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[ViewRenderStatus] = mapped_column(
-        SqlEnum(ViewRenderStatus), nullable=False
-    )
+    status: Mapped[ViewRenderStatus] = mapped_column(SqlEnum(ViewRenderStatus), nullable=False)
 
 
 class ETag(Base):
@@ -1021,9 +877,7 @@ class ETag(Base):
     __table_args__ = (UniqueConstraint("namespace_id", "table"),)
 
     etag_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    namespace_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("namespace.namespace_id")
-    )
+    namespace_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("namespace.namespace_id"))
     table: Mapped[str] = mapped_column(Text, nullable=False)
     etag: Mapped[UUID] = mapped_column(
         postgresql.UUID(as_uuid=True),
@@ -1037,9 +891,7 @@ class PlanLimit(Base):
     namespace_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("namespace.namespace_id"), primary_key=True
     )
-    loc_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("locality.loc_id"), primary_key=True
-    )
+    loc_id: Mapped[int] = mapped_column(Integer, ForeignKey("locality.loc_id"), primary_key=True)
     layer_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("geo_layer.layer_id"), primary_key=True
     )
@@ -1053,9 +905,7 @@ class PlanLimit(Base):
 class NamespaceLimit(Base):
     __tablename__ = "namespace_limit"
 
-    user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.user_id"), primary_key=True
-    )
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id"), primary_key=True)
     max_ns_creation: Mapped[int | None] = mapped_column(
         Integer,
         nullable=True,

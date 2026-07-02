@@ -64,12 +64,8 @@ class GeoImportApi(NamespacedObjectApi):
             obj_meta: models.ObjectMeta = Depends(get_obj_meta),
             scopes: ScopeManager = Depends(get_scopes),
         ):
-            namespace_obj = self._namespace_with_write(
-                db=db, scopes=scopes, path=namespace
-            )
-            import_obj, _ = self.crud.create(
-                db=db, namespace=namespace_obj, obj_meta=obj_meta
-            )
+            namespace_obj = self._namespace_with_write(db=db, scopes=scopes, path=namespace)
+            import_obj, _ = self.crud.create(db=db, namespace=namespace_obj, obj_meta=obj_meta)
             return self.get_schema.from_attributes(import_obj)
 
         return create_route

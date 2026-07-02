@@ -1,30 +1,31 @@
-import pytest, subprocess
-from gerrydb_meta.render import view_to_gpkg, RenderError, graph_to_gpkg
-from types import SimpleNamespace
-from fastapi import HTTPException
 import logging
-import gerrydb_meta.models as models
-import geopandas as gpd
-from shapely.geometry import Point
-from gerrydb_meta import crud, schemas
-from gerrydb_meta.enums import ColumnKind, ColumnType
-import pytest
-import logging
-import pandas as pd
+import os
+import sqlite3
+import subprocess
+import sys
 import time
+from types import SimpleNamespace
+
+import geopandas as gpd
+import pandas as pd
+import pytest
+from fastapi import HTTPException
+from shapely.geometry import Point
+
+import gerrydb_meta.api.view as view_api
+import gerrydb_meta.models as models
+from gerrydb_meta import crud, schemas
+from gerrydb_meta.api.deps import get_scopes
+from gerrydb_meta.enums import ColumnKind, ColumnType
 from gerrydb_meta.render import (
+    RenderError,
     __get_arg_max,
-    __validate_query,
     __run_subprocess,
     __validate_geo_and_internal_point_rows_count,
+    __validate_query,
+    graph_to_gpkg,
+    view_to_gpkg,
 )
-import gerrydb_meta.api.view as view_api
-from gerrydb_meta.api.deps import get_scopes
-import sqlite3
-
-
-import os
-import sys
 
 
 class DummyContext:
@@ -51,9 +52,7 @@ def test_run_subprocess_logs_and_raises(monkeypatch, caplog):
         stderr=b"fake-stderr",
     )
 
-    monkeypatch.setattr(
-        subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(err)
-    )
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(err))
     caplog.set_level(logging.ERROR)
 
     with pytest.raises(RenderError) as excinfo:
@@ -61,10 +60,7 @@ def test_run_subprocess_logs_and_raises(monkeypatch, caplog):
     assert str(excinfo.value) == "Failed to render view: geography query failed."
 
     log_text = caplog.text
-    assert (
-        "Failed to export view with ogr2ogr. Query: SELECT * from dummy_table"
-        in log_text
-    )
+    assert "Failed to export view with ogr2ogr. Query: SELECT * from dummy_table" in log_text
     assert "ogr2ogr stdout: fake-stdout" in log_text
     assert "ogr2ogr stderr: fake-stderr" in log_text
 
@@ -84,9 +80,7 @@ def test_sysconf_raises_oserror(monkeypatch):
 
 def test_sysconf_raises_valueerror(monkeypatch):
     monkeypatch.setattr(os, "sysconf_names", {"SC_ARG_MAX": object()})
-    monkeypatch.setattr(
-        os, "sysconf", lambda name: (_ for _ in ()).throw(ValueError("bad arg"))
-    )
+    monkeypatch.setattr(os, "sysconf", lambda name: (_ for _ in ()).throw(ValueError("bad arg")))
     with pytest.raises(ValueError):
         __get_arg_max()
 
@@ -125,9 +119,7 @@ def test_geo_layer_not_found():
             internal_point_layer_name="missing_internal",
             type="T1",
         )
-    assert str(excinfo.value) == (
-        "Failed to render T1: geographic layer not found in GeoPackage."
-    )
+    assert str(excinfo.value) == ("Failed to render T1: geographic layer not found in GeoPackage.")
 
 
 def test_internal_point_layer_not_found():
@@ -223,9 +215,7 @@ def test_ogr2ogr_failure(monkeypatch):
 
     monkeypatch.setattr("subprocess.run", fake_run)
 
-    with pytest.raises(
-        RenderError, match="Failed to render view: geography query failed"
-    ):
+    with pytest.raises(RenderError, match="Failed to render view: geography query failed"):
         view_to_gpkg(
             DummyContext(),
             "postgresql://doesntmatter",
@@ -314,9 +304,7 @@ def test_good_render_view(db, me_2010_gdf, me_2010_nx_graph, me_2010_plan_dict, 
         obj_meta=meta,
     )
 
-    geo_set = crud.geo_layer.get_set_by_locality(
-        db=db, layer=geo_layer, locality=loc[0]
-    )
+    geo_set = crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0])
     assignments = {mem.geo: me_2010_plan_dict[mem.geo.path] for mem in geo_set.members}
 
     _ = crud.plan.create(
@@ -343,9 +331,7 @@ def test_good_render_view(db, me_2010_gdf, me_2010_nx_graph, me_2010_plan_dict, 
             layer="counties_render",
             edges=list(me_2010_nx_graph.edges(data=True)),
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={o.path: o for o in geo_objs},
         obj_meta=meta,
         namespace=ns,
@@ -523,9 +509,7 @@ def test_good_render_view_default_projection(
         obj_meta=meta,
     )
 
-    geo_set = crud.geo_layer.get_set_by_locality(
-        db=db, layer=geo_layer, locality=loc[0]
-    )
+    geo_set = crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0])
     assignments = {mem.geo: me_2010_plan_dict[mem.geo.path] for mem in geo_set.members}
 
     _ = crud.plan.create(
@@ -552,9 +536,7 @@ def test_good_render_view_default_projection(
             layer="counties_render2",
             edges=list(me_2010_nx_graph.edges(data=True)),
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={o.path: o for o in geo_objs},
         obj_meta=meta,
         namespace=ns,
@@ -744,9 +726,7 @@ def test_good_render_graph(db, me_2010_gdf, me_2010_nx_graph, ia_dataframe, capl
             layer="counties_graph",
             edges=list(me_2010_nx_graph.edges(data=True)),
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={o.path: o for o in geo_objs},
         obj_meta=meta,
         namespace=ns,
@@ -783,17 +763,13 @@ def test_good_render_graph(db, me_2010_gdf, me_2010_nx_graph, ia_dataframe, capl
     df_edge_set = set(
         [tuple(sorted([row["path_1"], row["path_2"]])) for _, row in edge_df.iterrows()]
     )
-    base_edge_set = set(
-        [tuple(sorted([e1, e2])) for e1, e2 in me_2010_nx_graph.edges()]
-    )
+    base_edge_set = set([tuple(sorted([e1, e2])) for e1, e2 in me_2010_nx_graph.edges()])
     assert df_edge_set == base_edge_set
 
 
 # Needed to check and make sure we don't grab extra geos on accident
 # Added after finding this as a bug
-def test_good_render_graph_extra_geos(
-    db, me_2010_gdf, me_2010_nx_graph, ia_dataframe, caplog
-):
+def test_good_render_graph_extra_geos(db, me_2010_gdf, me_2010_nx_graph, ia_dataframe, caplog):
 
     user = models.User(email="graphtestextra@example.com", name="Graph User")
     db.add(user)
@@ -909,9 +885,7 @@ def test_good_render_graph_extra_geos(
             layer="counties_graph_extra",
             edges=list(me_2010_nx_graph.edges(data=True)),
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={o.path: o for o in geo_objs},
         obj_meta=meta,
         namespace=ns,
@@ -948,9 +922,7 @@ def test_good_render_graph_extra_geos(
     df_edge_set = set(
         [tuple(sorted([row["path_1"], row["path_2"]])) for _, row in edge_df.iterrows()]
     )
-    base_edge_set = set(
-        [tuple(sorted([e1, e2])) for e1, e2 in me_2010_nx_graph.edges()]
-    )
+    base_edge_set = set([tuple(sorted([e1, e2])) for e1, e2 in me_2010_nx_graph.edges()])
     assert df_edge_set == base_edge_set
 
 
@@ -1051,9 +1023,7 @@ def test_good_render_graph_new_projection(db, me_2010_gdf, me_2010_nx_graph, cap
             edges=list(me_2010_nx_graph.edges(data=True)),
             proj="epsg:26919",
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={o.path: o for o in geo_objs},
         obj_meta=meta,
         namespace=ns,
@@ -1173,9 +1143,7 @@ def test_view_render_api(db, me_2010_gdf, me_2010_nx_graph, me_2010_plan_dict, c
         obj_meta=meta,
     )
 
-    geo_set = crud.geo_layer.get_set_by_locality(
-        db=db, layer=geo_layer, locality=loc[0]
-    )
+    geo_set = crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0])
     assignments = {mem.geo: me_2010_plan_dict[mem.geo.path] for mem in geo_set.members}
 
     _ = crud.plan.create(
@@ -1202,9 +1170,7 @@ def test_view_render_api(db, me_2010_gdf, me_2010_nx_graph, me_2010_plan_dict, c
             layer="counties_render_api",
             edges=list(me_2010_nx_graph.edges(data=True)),
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={o.path: o for o in geo_objs},
         obj_meta=meta,
         namespace=ns,

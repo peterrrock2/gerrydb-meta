@@ -35,9 +35,7 @@ class PlanApi(NamespacedObjectApi):
             obj_meta: models.ObjectMeta = Depends(get_obj_meta),
             scopes: ScopeManager = Depends(get_scopes),
         ):
-            plan_namespace_obj = self._namespace_with_write(
-                db=db, scopes=scopes, path=namespace
-            )
+            plan_namespace_obj = self._namespace_with_write(db=db, scopes=scopes, path=namespace)
 
             geo_set_version = geo_set_from_paths(
                 locality=obj_in.locality,

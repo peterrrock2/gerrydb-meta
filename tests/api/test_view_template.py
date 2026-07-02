@@ -1,15 +1,16 @@
 """Tests for GerryDB REST API view template endpoints."""
 
 from http import HTTPStatus
+
 import pytest
 from fastapi import HTTPException
 
+import gerrydb_meta.models as models
 from gerrydb_meta import crud, schemas
+from gerrydb_meta.api.deps import get_scopes
+from gerrydb_meta.api.view_template import ViewTemplateApi
 from gerrydb_meta.enums import ColumnKind, ColumnType, ScopeType
 from gerrydb_meta.main import API_PREFIX
-from gerrydb_meta.api.view_template import ViewTemplateApi
-from gerrydb_meta.api.deps import get_scopes
-import gerrydb_meta.models as models
 from tests.api import create_column
 from tests.api.scopes import grant_namespaced_scope
 
@@ -212,10 +213,7 @@ def test_api_view_template_create__invalid_path(
         },
     )
     assert create_response.status_code == HTTPStatus.BAD_REQUEST, create_response.json()
-    assert (
-        "Found unexpected expression in field 'path'"
-        in create_response.json()["detail"]
-    )
+    assert "Found unexpected expression in field 'path'" in create_response.json()["detail"]
 
 
 def test_api_view_template_create__duplicate_column(ctx_public_namespace_read_write):
@@ -233,9 +231,7 @@ def test_api_view_template_create__duplicate_column(ctx_public_namespace_read_wr
             "members": [col_path, col_path],
         },
     )
-    assert (
-        create_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    ), create_response.json()
+    assert create_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, create_response.json()
     assert "Duplicate resource paths" in create_response.json()["detail"]
 
 
@@ -253,12 +249,10 @@ def test_api_view_template_create__twice(ctx_public_namespace_read_write):
     create_response = ctx.client.post(f"{VIEW_TEMPLATES_ROOT}/{namespace}", json=body)
     assert create_response.status_code == HTTPStatus.CREATED, create_response.json()
 
-    create_twice_response = ctx.client.post(
-        f"{VIEW_TEMPLATES_ROOT}/{namespace}", json=body
+    create_twice_response = ctx.client.post(f"{VIEW_TEMPLATES_ROOT}/{namespace}", json=body)
+    assert create_twice_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, (
+        create_twice_response.json()
     )
-    assert (
-        create_twice_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    ), create_twice_response.json()
     assert "may already exist" in create_twice_response.json()["detail"]
 
 
@@ -391,8 +385,7 @@ def test_api_view_template_create__join_constraint__private_xref_in_private_name
         json={
             "path": "private",
             "description": (
-                "A private view template with columns "
-                "from multiple private namespaces."
+                "A private view template with columns from multiple private namespaces."
             ),
             "members": [
                 f"/columns/{namespace}/private_col",
@@ -401,9 +394,7 @@ def test_api_view_template_create__join_constraint__private_xref_in_private_name
         },
     )
 
-    assert (
-        create_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    ), create_response.json()
+    assert create_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, create_response.json()
     assert "Cannot create cross-namespace reference" in create_response.json()["detail"]
 
 
@@ -440,7 +431,4 @@ def test_odd_errors(ctx_public_namespace_read_write):
     )
 
     assert create_response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-    assert (
-        "Maximum view template column count exceeded"
-        in create_response.json()["detail"]
-    )
+    assert "Maximum view template column count exceeded" in create_response.json()["detail"]

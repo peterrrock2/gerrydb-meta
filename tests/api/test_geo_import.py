@@ -1,14 +1,14 @@
 """Tests for GerryDB REST API GeoImport endpoints."""
 
 from http import HTTPStatus
-from fastapi import HTTPException
+
 import pytest
+from fastapi import HTTPException
 
-from gerrydb_meta import schemas
-from gerrydb_meta.main import API_PREFIX
-from gerrydb_meta.api.geo_import import GeoImportApi
 import gerrydb_meta.crud as crud
-
+from gerrydb_meta import schemas
+from gerrydb_meta.api.geo_import import GeoImportApi
+from gerrydb_meta.main import API_PREFIX
 
 GEO_IMPORTS_ROOT = f"{API_PREFIX}/geo-imports"
 
@@ -63,9 +63,7 @@ def test_api_geo_import_create_read__private_namespace(
     assert create_response.status_code == HTTPStatus.CREATED, create_response.json()
     create_body = schemas.GeoImport(**create_response.json())
 
-    read_response = public_ctx.client.get(
-        f"{GEO_IMPORTS_ROOT}/{namespace}/{create_body.uuid}"
-    )
+    read_response = public_ctx.client.get(f"{GEO_IMPORTS_ROOT}/{namespace}/{create_body.uuid}")
     assert read_response.status_code == HTTPStatus.NOT_FOUND, read_response.json()
 
 

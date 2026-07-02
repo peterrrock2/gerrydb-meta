@@ -17,15 +17,12 @@ GERRYDB_SQL_ECHO = bool(os.environ.get("GERRYDB_SQL_ECHO", False))
 @click.command()
 @click.option("--name", help="Superuser name.", required=True)
 @click.option("--email", help="Superuser email.", required=True)
-@click.option(
-    "--reset", is_flag=True, help="Clear old data and re-initialize schema (dangerous)."
-)
+@click.option("--reset", is_flag=True, help="Clear old data and re-initialize schema (dangerous).")
 @click.option("--init-schema", is_flag=True, help="Initialize schema from models.")
 @click.option(
     "--use-test-key",
     is_flag=True,
-    help="Sets the API key for the new user to a known value. "
-    "FOR TESTING USE ONLY!!!",
+    help="Sets the API key for the new user to a known value. FOR TESTING USE ONLY!!!",
 )
 @click.option(
     "--overwrite-config",

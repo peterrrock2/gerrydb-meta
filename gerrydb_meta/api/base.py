@@ -12,14 +12,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from uvicorn.config import logger as log
 
 from gerrydb_meta import crud, models
 from gerrydb_meta.api.deps import get_db, get_obj_meta, get_scopes, no_perms
 from gerrydb_meta.crud.base import normalize_path
 from gerrydb_meta.exceptions import GerryValueError
 from gerrydb_meta.scopes import ScopeManager
-from uvicorn.config import logger as log
-
 
 # For path resolution across objects.
 ENDPOINT_TO_CRUD = {
@@ -107,9 +106,7 @@ def parse_path(path: str) -> tuple[str, str]:
     """
     normalized_path = path.strip().lower()
     parts = normalized_path.split("/")
-    return (
-        (None, normalized_path) if len(parts) < 3 else (parts[1], "/".join(parts[2:]))
-    )
+    return (None, normalized_path) if len(parts) < 3 else (parts[1], "/".join(parts[2:]))
 
 
 def from_resource_paths(
@@ -151,8 +148,7 @@ def from_resource_paths(
             raise HTTPException(
                 status_code=HTTPStatus.BAD_REQUEST,
                 detail=(
-                    f'Bad resource path "{path}": must have form '
-                    "/<resource>/<namespace>/<path>"
+                    f'Bad resource path "{path}": must have form /<resource>/<namespace>/<path>'
                 ),
             )
         if parts[0] not in ENDPOINT_TO_CRUD:
@@ -213,8 +209,7 @@ def from_resource_paths(
                     (obj.namespace.path, obj.path) for obj in objs
                 )
                 formatted_missing = [
-                    f"/{endpoint}/{miss_ns}/{miss_path}"
-                    for miss_ns, miss_path in missing
+                    f"/{endpoint}/{miss_ns}/{miss_path}" for miss_ns, miss_path in missing
                 ]
                 raise HTTPException(
                     status_code=HTTPStatus.NOT_FOUND,
@@ -273,8 +268,7 @@ def namespace_with_read(
         raise HTTPException(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail=(
-                "Cannot join across private namespaces: "
-                f"namespace {namespace_obj.path} is private."
+                f"Cannot join across private namespaces: namespace {namespace_obj.path} is private."
             ),
         )
     return namespace_obj
@@ -302,11 +296,7 @@ def geos_from_paths(
     """
     return from_resource_paths(
         paths=[
-            (
-                f"/geographies{path}"
-                if path.startswith("/")
-                else f"/geographies/{namespace}/{path}"
-            )
+            (f"/geographies{path}" if path.startswith("/") else f"/geographies/{namespace}/{path}")
             for path in paths
         ],
         db=db,
@@ -333,9 +323,7 @@ def geo_set_from_paths(
 
     locality_obj = crud.locality.get_by_ref(db=db, path=locality)
     if locality_obj is None:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail="Locality not found."
-        )
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Locality not found.")
 
     log.debug("PAST BASIC CHECKS")
 
@@ -355,9 +343,7 @@ def geo_set_from_paths(
         namespace=layer_namespace_obj,
     )
     if layer_obj is None:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail="Geographic layer not found."
-        )
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Geographic layer not found.")
 
     # Verify that a `GeoSet` currently exists for (locality, layer).
     geo_set_version = crud.geo_layer.get_set_by_locality(
@@ -367,8 +353,7 @@ def geo_set_from_paths(
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(
-                f'No set of geographies in geographic layer "{layer}" '
-                f'at locality "{locality}".'
+                f'No set of geographies in geographic layer "{layer}" at locality "{locality}".'
             ),
         )
     return geo_set_version
@@ -524,17 +509,13 @@ class NamespacedObjectApi:
             )
         return obj
 
-    def _check_etag(
-        self, *, db: Session, namespace: models.Namespace, header: str | None
-    ) -> None:
+    def _check_etag(self, *, db: Session, namespace: models.Namespace, header: str | None) -> None:
         """Processes an `If-None-Match` header.
 
         Raises 304 Not Modified if the namespaced collection's current ETag
         matches the ETag in `header`. Otherwise, does nothing.
         """
-        check_namespaced_etag(
-            db=db, crud_obj=self.crud, namespace=namespace, header=header
-        )
+        check_namespaced_etag(db=db, crud_obj=self.crud, namespace=namespace, header=header)
 
     def _get(self, router: APIRouter) -> Callable:
         @router.get(
@@ -552,9 +533,7 @@ class NamespacedObjectApi:
             if_none_match: str | None = Header(default=None),
         ):
             log.debug("IN GET FOR NAMESPACED OBJECT API")
-            namespace_obj = self._namespace_with_read(
-                db=db, scopes=scopes, path=namespace
-            )
+            namespace_obj = self._namespace_with_read(db=db, scopes=scopes, path=namespace)
             self._check_etag(db=db, namespace=namespace_obj, header=if_none_match)
             etag = self.crud.etag(db, namespace_obj)
             obj = self._obj(db=db, namespace=namespace_obj, path=path)
@@ -578,9 +557,7 @@ class NamespacedObjectApi:
             if_none_match: str | None = Header(default=None),
         ):
             log.debug("IN GET ALL FOR NAMESPACED OBJECT API")
-            namespace_obj = self._namespace_with_read(
-                db=db, scopes=scopes, path=namespace
-            )
+            namespace_obj = self._namespace_with_read(db=db, scopes=scopes, path=namespace)
             self._check_etag(db=db, namespace=namespace_obj, header=if_none_match)
             etag = self.crud.etag(db, namespace_obj)
             objs = self.crud.all_in_namespace(db=db, namespace=namespace_obj)
@@ -607,9 +584,7 @@ class NamespacedObjectApi:
             scopes: ScopeManager = Depends(get_scopes),
         ):
             log.debug("IN POST FOR NAMESPACED OBJECT API")
-            namespace_obj = self._namespace_with_write(
-                db=db, scopes=scopes, path=namespace
-            )
+            namespace_obj = self._namespace_with_write(db=db, scopes=scopes, path=namespace)
             obj, etag = self.crud.create(
                 db=db, obj_in=obj_in, namespace=namespace_obj, obj_meta=obj_meta
             )
@@ -636,13 +611,9 @@ class NamespacedObjectApi:
             scopes: ScopeManager = Depends(get_scopes),
         ):
             log.debug("IN PATCH FOR NAMESPACED OBJECT API")
-            namespace_obj = self._namespace_with_write(
-                db=db, scopes=scopes, path=namespace
-            )
+            namespace_obj = self._namespace_with_write(db=db, scopes=scopes, path=namespace)
             obj = self._obj(db=db, namespace=namespace_obj, path=path)
-            patched_obj, etag = self.crud.patch(
-                db=db, obj=obj, obj_meta=obj_meta, patch=obj_in
-            )
+            patched_obj, etag = self.crud.patch(db=db, obj=obj, obj_meta=obj_meta, patch=obj_in)
             add_etag(response, etag)
             return self.get_schema.from_attributes(patched_obj)
 

@@ -32,9 +32,7 @@ def get_obj_meta(
 
     obj_meta = crud.obj_meta.get(db=db, id=parsed_uuid)
     if obj_meta is None:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND, detail="Object metadata not found."
-        )
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Object metadata not found.")
 
     if not scopes.can_read_meta() and obj_meta.created_by != user.user_id:
         raise HTTPException(

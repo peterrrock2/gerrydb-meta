@@ -32,9 +32,7 @@ def upgrade() -> None:
         sa.Column("path", sa.Text(), nullable=False),
         sa.Column(
             "status",
-            sa.Enum(
-                "PENDING", "RUNNING", "FAILED", "SUCCEEDED", name="viewrenderstatus"
-            ),
+            sa.Enum("PENDING", "RUNNING", "FAILED", "SUCCEEDED", name="viewrenderstatus"),
             nullable=False,
         ),
         sa.ForeignKeyConstraint(

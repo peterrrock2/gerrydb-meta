@@ -1,17 +1,18 @@
-import logging
-import pytest
-from shapely import Polygon, Point
-from fastapi import HTTPException
 import hashlib
+import logging
+
+import pytest
+from fastapi import HTTPException
+from shapely import Point, Polygon
 
 import gerrydb_meta.crud as crud
 import gerrydb_meta.schemas as schemas
 from gerrydb_meta.api.deps import get_scopes
 from gerrydb_meta.api.geography.fork_geos import (
-    fork_geos_between_namespaces,
-    check_forkability,
     __validate_forkability,
     __validate_source_and_target_namespaces,
+    check_forkability,
+    fork_geos_between_namespaces,
 )
 
 
@@ -123,9 +124,7 @@ def test_fork_validate__all_errors(caplog):
             source_layer=source_layer,
             target_namespace=target_namespace,
             target_layer=target_layer,
-            source_geo_hash_pairs=set(
-                [("source_geo", hashlib.md5(Polygon().wkb).hexdigest())]
-            ),
+            source_geo_hash_pairs=set([("source_geo", hashlib.md5(Polygon().wkb).hexdigest())]),
             target_geo_hash_pairs=set(),
             allow_extra_source_geos=False,
             allow_empty_polys=False,
@@ -390,9 +389,7 @@ def test_full_fork(ctx_no_scopes, caplog, me_2010_gdf):
 
     geos_in_new_ns = crud.geography.get_bulk(
         db=db,
-        namespaced_paths=[
-            (f"{ns2.path}", f"{row.Index}") for row in new_me_2010_gdf.itertuples()
-        ],
+        namespaced_paths=[(f"{ns2.path}", f"{row.Index}") for row in new_me_2010_gdf.itertuples()],
     )
 
     for geo in geos_in_new_ns:
@@ -511,9 +508,7 @@ def test_full_fork_lingering_errors(ctx_no_scopes, caplog, me_2010_gdf):
         )
 
     assert excinfo.value.status_code == 404
-    assert "Locality 'does_not_exist' not found in namespace" in str(
-        excinfo.value.detail
-    )
+    assert "Locality 'does_not_exist' not found in namespace" in str(excinfo.value.detail)
 
     with pytest.raises(HTTPException) as excinfo:
         check_forkability(
@@ -546,6 +541,5 @@ def test_full_fork_lingering_errors(ctx_no_scopes, caplog, me_2010_gdf):
 
     assert excinfo.value.status_code == 403
     assert (
-        f"Namespace '{ns.path}' is not public, so you cannot fork "
-        "values or geographies from it."
+        f"Namespace '{ns.path}' is not public, so you cannot fork values or geographies from it."
     ) in str(excinfo.value.detail)

@@ -208,9 +208,7 @@ def downgrade() -> None:
     op.drop_table("column_set", schema="gerrydb")
     op.drop_table("column_relation_member", schema="gerrydb")
     op.drop_table("column_relation", schema="gerrydb")
-    op.drop_index(
-        op.f("ix_gerrydb_column_ref_path"), table_name="column_ref", schema="gerrydb"
-    )
+    op.drop_index(op.f("ix_gerrydb_column_ref_path"), table_name="column_ref", schema="gerrydb")
     op.drop_table("column_ref", schema="gerrydb")
     op.drop_index(
         op.f("ix_gerrydb_column_canonical_ref_id"),

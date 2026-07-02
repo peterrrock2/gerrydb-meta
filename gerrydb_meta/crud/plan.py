@@ -5,11 +5,11 @@ from typing import Tuple
 
 from sqlalchemy import exc, insert, select
 from sqlalchemy.orm import Session
+from uvicorn.config import logger as log
 
 from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.exceptions import CreateValueError
-from uvicorn.config import logger as log
 
 
 class CRPlan(NamespacedCRBase[models.Plan, schemas.PlanCreate]):
@@ -79,17 +79,14 @@ class CRPlan(NamespacedCRBase[models.Plan, schemas.PlanCreate]):
         set_geo_ids = set(
             db.scalars(
                 select(models.GeoSetMember.geo_id).filter(
-                    models.GeoSetMember.set_version_id
-                    == geo_set_version.set_version_id,
+                    models.GeoSetMember.set_version_id == geo_set_version.set_version_id,
                 )
             )
         )
         assignment_geo_ids = set(geo.geo_id for geo in assignments)
         geo_ids_not_in_set = assignment_geo_ids - set_geo_ids
         if geo_ids_not_in_set:
-            geos_not_in_set = [
-                geo for geo in assignments if geo.geo_id in geo_ids_not_in_set
-            ]
+            geos_not_in_set = [geo for geo in assignments if geo.geo_id in geo_ids_not_in_set]
             raise CreateValueError(
                 "Some geographies in the assigment are not in the set defined by locality "
                 f'"{geo_set_version.loc.canonical_ref.path}" and geographic layer '
@@ -107,9 +104,7 @@ class CRPlan(NamespacedCRBase[models.Plan, schemas.PlanCreate]):
                 num_districts=len(set(assignments.values())),
                 complete=(len(unassigned_geo_ids) == 0),
                 description=obj_in.description,
-                source_url=(
-                    str(obj_in.source_url) if obj_in.source_url is not None else None
-                ),
+                source_url=(str(obj_in.source_url) if obj_in.source_url is not None else None),
                 districtr_id=obj_in.districtr_id,
                 daves_id=obj_in.daves_id,
                 meta_id=obj_meta.meta_id,
@@ -142,9 +137,7 @@ class CRPlan(NamespacedCRBase[models.Plan, schemas.PlanCreate]):
         db.refresh(plan)
         return plan, etag
 
-    def get(
-        self, db: Session, *, path: str, namespace: models.Namespace
-    ) -> models.Plan | None:
+    def get(self, db: Session, *, path: str, namespace: models.Namespace) -> models.Plan | None:
         """Retrieves a districting plan by reference path.
 
         Args:

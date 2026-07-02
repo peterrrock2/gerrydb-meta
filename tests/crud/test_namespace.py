@@ -1,9 +1,10 @@
-from gerrydb_meta import crud, schemas
 import pytest
-from gerrydb_meta.exceptions import CreateValueError
-from gerrydb_meta.admin import grant_scope
+
 import gerrydb_meta.models as models
-from gerrydb_meta.enums import ScopeType, NamespaceGroup
+from gerrydb_meta import crud, schemas
+from gerrydb_meta.admin import grant_scope
+from gerrydb_meta.enums import NamespaceGroup, ScopeType
+from gerrydb_meta.exceptions import CreateValueError
 
 
 def test_crud_namespace_create(db_with_meta):

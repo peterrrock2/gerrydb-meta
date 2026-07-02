@@ -65,9 +65,7 @@ def test_crud_locality_get_by_ref(db_with_meta):
         obj_meta=meta,
     )
     assert crud.locality.get_by_ref(db=db, path="atlantis").loc_id == loc[0].loc_id
-    assert (
-        crud.locality.get_by_ref(db=db, path="greece-atlantis").loc_id == loc[0].loc_id
-    )
+    assert crud.locality.get_by_ref(db=db, path="greece-atlantis").loc_id == loc[0].loc_id
 
 
 def test_crud_locality_patch(db_with_meta):

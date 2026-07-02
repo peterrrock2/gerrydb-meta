@@ -1,5 +1,6 @@
 """Tests for GerryDB REST API namespace endpoints."""
 
+import random
 from http import HTTPStatus
 
 import pytest
@@ -8,7 +9,6 @@ from pydantic import ValidationError
 from gerrydb_meta import crud, schemas
 from gerrydb_meta.enums import NamespaceGroup, ScopeType
 from gerrydb_meta.main import API_PREFIX
-import random
 
 from .scopes import grant_scope
 
@@ -19,9 +19,7 @@ NAMESPACES_ROOT = f"{API_PREFIX}/namespaces"
 def ctx_with_namespace_rc_all(ctx_no_scopes_factory):
     """Client with global read/create namespace scopes."""
     ctx = ctx_no_scopes_factory()
-    grant_scope(
-        ctx.db, ctx.meta, ScopeType.NAMESPACE_READ, namespace_group=NamespaceGroup.ALL
-    )
+    grant_scope(ctx.db, ctx.meta, ScopeType.NAMESPACE_READ, namespace_group=NamespaceGroup.ALL)
     grant_scope(ctx.db, ctx.meta, ScopeType.NAMESPACE_CREATE)
     yield ctx
 
@@ -30,9 +28,7 @@ def ctx_with_namespace_rc_all(ctx_no_scopes_factory):
 def ctx_with_namespace_ro_all(ctx_no_scopes_factory):
     """Client with global read/write namespace scopes."""
     ctx = ctx_no_scopes_factory()
-    grant_scope(
-        ctx.db, ctx.meta, ScopeType.NAMESPACE_READ, namespace_group=NamespaceGroup.ALL
-    )
+    grant_scope(ctx.db, ctx.meta, ScopeType.NAMESPACE_READ, namespace_group=NamespaceGroup.ALL)
     yield ctx
 
 
@@ -81,14 +77,10 @@ def test_api_namespace_create_read__public(ctx_with_namespace_rc_all):
 
 def test_api_namespace_create__twice(ctx_with_namespace_rc_all):
     body = {"path": "census", "description": "Census data", "public": True}
-    create_response = ctx_with_namespace_rc_all.client.post(
-        f"{NAMESPACES_ROOT}/", json=body
-    )
+    create_response = ctx_with_namespace_rc_all.client.post(f"{NAMESPACES_ROOT}/", json=body)
     assert create_response.status_code == HTTPStatus.CREATED
 
-    create_again_response = ctx_with_namespace_rc_all.client.post(
-        f"{NAMESPACES_ROOT}/", json=body
-    )
+    create_again_response = ctx_with_namespace_rc_all.client.post(f"{NAMESPACES_ROOT}/", json=body)
     assert create_again_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
@@ -113,9 +105,7 @@ def test_api_namespace_create_read__private(ctx_with_namespace_rc_public):
     # Have admin create a private namespace.
     crud.namespace.create(
         db=ctx.db,
-        obj_in=schemas.NamespaceCreate(
-            path=private_ns_name, description="secret!", public=False
-        ),
+        obj_in=schemas.NamespaceCreate(path=private_ns_name, description="secret!", public=False),
         obj_meta=ctx.admin_meta,
     )
     read_response = ctx.client.get(f"{NAMESPACES_ROOT}/{private_ns_name}")
@@ -127,16 +117,12 @@ def test_api_namespace_all__private(ctx_with_namespace_rc_public):
     private_ns_name = f"{__name__}_private_{random.randint(0, 10000)}"
     crud.namespace.create(
         db=ctx.db,
-        obj_in=schemas.NamespaceCreate(
-            path=private_ns_name, description="secret!", public=False
-        ),
+        obj_in=schemas.NamespaceCreate(path=private_ns_name, description="secret!", public=False),
         obj_meta=ctx.admin_meta,
     )
     crud.namespace.create(
         db=ctx.db,
-        obj_in=schemas.NamespaceCreate(
-            path="public", description="not secret!", public=True
-        ),
+        obj_in=schemas.NamespaceCreate(path="public", description="not secret!", public=True),
         obj_meta=ctx.admin_meta,
     )
 

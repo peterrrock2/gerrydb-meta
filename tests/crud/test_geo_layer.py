@@ -1,6 +1,7 @@
 import pytest
+
+from gerrydb_meta import crud, models, schemas
 from gerrydb_meta.exceptions import CreateValueError
-from gerrydb_meta import crud, schemas, models
 
 
 def make_atlantis_ns(db, meta):
@@ -155,9 +156,7 @@ def test_crud_geo_layer_map_locality(db_with_meta, caplog):
 
     bad_geo_list = geography_list.copy()
     bad_geo_list[0].namespace_id = 2
-    with pytest.raises(
-        CreateValueError, match="Cannot map geographies in multiple namespaces"
-    ):
+    with pytest.raises(CreateValueError, match="Cannot map geographies in multiple namespaces"):
         crud.geo_layer.map_locality(
             db=db,
             layer=geo_layer,

@@ -1,15 +1,16 @@
-import pytest
-from uuid import UUID
 from datetime import datetime
+from uuid import UUID
+
+import pytest
 from sqlalchemy import text
 
 import gerrydb_meta.admin as admin_module
-from gerrydb_meta.scopes import ScopeManager
-from gerrydb_meta.admin import GerryAdmin
 import gerrydb_meta.crud as crud
+from gerrydb_meta.admin import GerryAdmin
 from gerrydb_meta.enums import GroupPermissions
 from gerrydb_meta.models import *
 from gerrydb_meta.schemas import NamespaceCreate
+from gerrydb_meta.scopes import ScopeManager
 
 
 def clear_db(session):
@@ -60,11 +61,7 @@ def test_scopes_public_user(db):
             created_by=admin.user_id,
         )
     )
-    meta = (
-        db.query(ObjectMeta)
-        .filter_by(uuid="00000000-0000-0000-0000-000000000001")
-        .one()
-    )
+    meta = db.query(ObjectMeta).filter_by(uuid="00000000-0000-0000-0000-000000000001").one()
     db.add(
         Namespace(
             path="public_ns",
@@ -122,11 +119,7 @@ def test_scopes_contributor_user(db):
             created_by=admin.user_id,
         )
     )
-    meta = (
-        db.query(ObjectMeta)
-        .filter_by(uuid="00000000-0000-0000-0000-000000000001")
-        .one()
-    )
+    meta = db.query(ObjectMeta).filter_by(uuid="00000000-0000-0000-0000-000000000001").one()
     db.add(
         Namespace(
             path="public_ns",
@@ -157,11 +150,7 @@ def test_scopes_contributor_user(db):
             created_by=contrib_user.user_id,
         )
     )
-    meta2 = (
-        db.query(ObjectMeta)
-        .filter_by(uuid="00000000-0000-0000-0000-000000000002")
-        .one()
-    )
+    meta2 = db.query(ObjectMeta).filter_by(uuid="00000000-0000-0000-0000-000000000002").one()
 
     other_ns, _ = crud.namespace.create(
         db=db,
@@ -216,11 +205,7 @@ def test_scopes_admin_user(db):
             created_by=admin.user_id,
         )
     )
-    meta = (
-        db.query(ObjectMeta)
-        .filter_by(uuid="00000000-0000-0000-0000-000000000001")
-        .one()
-    )
+    meta = db.query(ObjectMeta).filter_by(uuid="00000000-0000-0000-0000-000000000001").one()
     db.add(
         Namespace(
             path="public_ns",
@@ -251,11 +236,7 @@ def test_scopes_admin_user(db):
             created_by=contrib_user.user_id,
         )
     )
-    meta2 = (
-        db.query(ObjectMeta)
-        .filter_by(uuid="00000000-0000-0000-0000-000000000002")
-        .one()
-    )
+    meta2 = db.query(ObjectMeta).filter_by(uuid="00000000-0000-0000-0000-000000000002").one()
 
     other_ns, _ = crud.namespace.create(
         db=db,
@@ -290,6 +271,4 @@ def test_scopes_admin_user(db):
 
     assert all([a == b for a, b in zip(top_all_scopes, db.query(UserScope).all())])
     assert all([a == b for a, b in zip(top_all_groups, db.query(UserGroup).all())])
-    assert all(
-        [a == b for a, b in zip(top_all_group_scopes, db.query(UserGroupScope).all())]
-    )
+    assert all([a == b for a, b in zip(top_all_group_scopes, db.query(UserGroupScope).all())])

@@ -1,5 +1,6 @@
-from gerrydb_meta.utils import create_column_value_partition_text
 from sqlalchemy import text
+
+from gerrydb_meta.utils import create_column_value_partition_text
 
 
 def test_create_column_value_partition_text():

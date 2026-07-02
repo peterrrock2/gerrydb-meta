@@ -4,17 +4,16 @@
 #   https://github.com/tiangolo/full-stack-fastapi-postgresql/
 #   blob/490c554e23343eec0736b06e59b2108fdd057fdc/
 #   %7B%7Bcookiecutter.project_slug%7D%7D/backend/app/app/crud/base.py
-from abc import abstractmethod
 import uuid
+from abc import ABC, abstractmethod
 from typing import Any, Generic, List, Optional, Tuple, Type, TypeVar
 
 from pydantic import BaseModel
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
-from abc import ABC, abstractmethod
 
-from gerrydb_meta.models import Base, ETag, Namespace, ObjectMeta
 from gerrydb_meta.exceptions import GerryPathError
+from gerrydb_meta.models import Base, ETag, Namespace, ObjectMeta
 
 ModelType = TypeVar("ModelType", bound=Base)
 GetSchemaType = TypeVar("GetSchemaType", bound=BaseModel)
@@ -57,9 +56,7 @@ def normalize_path(
             )
 
         return "/".join(
-            seg.lower() if i < len(path_list) - 1 else seg
-            for i, seg in enumerate(path_list)
-            if seg
+            seg.lower() if i < len(path_list) - 1 else seg for i, seg in enumerate(path_list) if seg
         )
 
     path_list = [seg for seg in path.strip().lower().split("/") if seg]
@@ -140,11 +137,7 @@ class NamespacedCRBase(Generic[ModelType, CreateSchemaType], ABC):
         pass
 
     def all_in_namespace(self, db: Session, *, namespace: Namespace) -> List[ModelType]:
-        return (
-            db.query(self.model)
-            .filter(self.model.namespace_id == namespace.namespace_id)
-            .all()
-        )
+        return db.query(self.model).filter(self.model.namespace_id == namespace.namespace_id).all()
 
     @abstractmethod
     def create(

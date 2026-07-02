@@ -6,11 +6,11 @@ from typing import Tuple, Union
 
 from sqlalchemy import exc, select
 from sqlalchemy.orm import Session
+from uvicorn.config import logger as log
 
 from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.exceptions import CreateValueError
-from uvicorn.config import logger as log
 
 
 class CRViewTemplate(NamespacedCRBase[models.ViewTemplate, schemas.ViewTemplateCreate]):
@@ -28,9 +28,7 @@ class CRViewTemplate(NamespacedCRBase[models.ViewTemplate, schemas.ViewTemplateC
             isinstance(member, models.ColumnRef) or isinstance(member, models.ColumnSet)
             for member in resolved_members
         ):
-            raise CreateValueError(
-                "View templates may only contain columns and column sets."
-            )
+            raise CreateValueError("View templates may only contain columns and column sets.")
 
         with db.begin(nested=True):
             canonical_path = normalize_path(obj_in.path)
@@ -66,11 +64,7 @@ class CRViewTemplate(NamespacedCRBase[models.ViewTemplate, schemas.ViewTemplateC
             # Check for conflicting canonical refs.
             found_columns_paths = set()
             for idx, member in enumerate(resolved_members):
-
-                if (
-                    member.namespace_id != namespace.namespace_id
-                    and not member.namespace.public
-                ):
+                if member.namespace_id != namespace.namespace_id and not member.namespace.public:
                     raise CreateValueError(
                         "Cannot create cross-namespace reference to an object in "
                         "a private namespace."

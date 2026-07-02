@@ -1,9 +1,9 @@
 import logging
+
 import gerrydb_meta.models as models
 from gerrydb_meta import crud, schemas
 from gerrydb_meta.api.base import geo_set_from_paths
 from gerrydb_meta.api.deps import get_scopes
-import logging
 from gerrydb_meta.main import API_PREFIX
 
 
@@ -13,9 +13,7 @@ def test_good_map_layer_view(db, me_2010_gdf, ctx_superuser, caplog):
     db.add(user)
     db.flush()
 
-    api_key = models.ApiKey(
-        key_hash=b"geo_set_testing_key", user_id=user.user_id, user=user
-    )
+    api_key = models.ApiKey(key_hash=b"geo_set_testing_key", user_id=user.user_id, user=user)
     db.add(api_key)
     db.flush()
 
@@ -141,9 +139,7 @@ def test_errors_map_layer_view(db, me_2010_gdf, ctx_superuser, caplog):
     db.add(user)
     db.flush()
 
-    api_key = models.ApiKey(
-        key_hash=b"geo_set_bad_testing_key", user_id=user.user_id, user=user
-    )
+    api_key = models.ApiKey(key_hash=b"geo_set_bad_testing_key", user_id=user.user_id, user=user)
     db.add(api_key)
     db.flush()
 

@@ -18,9 +18,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "view", Column("num_geos", Integer(), nullable=False), schema="gerrydb"
-    )
+    op.add_column("view", Column("num_geos", Integer(), nullable=False), schema="gerrydb")
 
 
 def downgrade() -> None:

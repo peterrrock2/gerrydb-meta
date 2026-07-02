@@ -10,9 +10,9 @@ from uvicorn.config import logger as log
 import gerrydb_meta.admin as admin_module
 from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import CRBase
+from gerrydb_meta.enums import ScopeType
 from gerrydb_meta.exceptions import CreateValueError
 from gerrydb_meta.scopes import ScopeManager
-from gerrydb_meta.enums import ScopeType
 
 
 class CRNamespace(CRBase[models.Namespace, schemas.NamespaceCreate]):
@@ -32,17 +32,13 @@ class CRNamespace(CRBase[models.Namespace, schemas.NamespaceCreate]):
             .first()
         )
         namespace_creator = (
-            db.query(models.User)
-            .filter(models.User.user_id == obj_meta.created_by)
-            .first()
+            db.query(models.User).filter(models.User.user_id == obj_meta.created_by).first()
         )
 
         if namespace_limit is None:
             namespace_limit = models.NamespaceLimit(
                 user_id=obj_meta.created_by,
-                max_ns_creation=(
-                    None if admin_module.check_admin(db, namespace_creator) else 10
-                ),
+                max_ns_creation=(None if admin_module.check_admin(db, namespace_creator) else 10),
             )
 
             db.add(namespace_limit)
@@ -51,8 +47,7 @@ class CRNamespace(CRBase[models.Namespace, schemas.NamespaceCreate]):
 
         if (
             namespace_limit.max_ns_creation is not None
-            and namespace_limit.curr_creation_count + 1
-            > namespace_limit.max_ns_creation
+            and namespace_limit.curr_creation_count + 1 > namespace_limit.max_ns_creation
         ):
             raise CreateValueError(
                 f"{namespace_creator} has reached the maximum number of "
@@ -74,19 +69,14 @@ class CRNamespace(CRBase[models.Namespace, schemas.NamespaceCreate]):
         except exc.SQLAlchemyError:
             log.exception("Failed to create namespace '%s'.", canonical_path)
             raise CreateValueError(
-                f"Failed to create namespace '{canonical_path}'. "
-                "(The namespace may already exist.)"
+                f"Failed to create namespace '{canonical_path}'. (The namespace may already exist.)"
             )
 
         etag = self._update_etag(db)
         db.flush()
 
         # Now grant the appropriate scopes to the user.
-        user = (
-            db.query(models.User)
-            .filter(models.User.user_id == obj_meta.created_by)
-            .one()
-        )
+        user = db.query(models.User).filter(models.User.user_id == obj_meta.created_by).one()
 
         if not ScopeManager(user=user).can_read_in_namespace(namespace):
             admin_module.grant_scope(

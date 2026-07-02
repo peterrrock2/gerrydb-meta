@@ -1,10 +1,11 @@
 import logging
+
+import geopandas as gpd
+import pytest
+from starlette.responses import Response
+
 from gerrydb_meta import crud, schemas
 from gerrydb_meta.api.graph import *
-import logging
-from starlette.responses import Response
-import pytest
-import geopandas as gpd
 
 
 def test_good_graph_create_get(ctx_no_scopes, me_2010_gdf, me_2010_nx_graph, caplog):
@@ -314,8 +315,6 @@ def test_graph_render(ctx_no_scopes, me_2010_gdf, me_2010_nx_graph, caplog):
     graph_gdf = gpd.read_file(gpkg_path, layer="gerrydb_graph_edge")
 
     sorted_me_edges = {tuple(sorted(e)) for e in me_2010_nx_graph.edges()}
-    sorted_graph_edges = {
-        tuple(sorted(e)) for e in zip(graph_gdf["path_1"], graph_gdf["path_2"])
-    }
+    sorted_graph_edges = {tuple(sorted(e)) for e in zip(graph_gdf["path_1"], graph_gdf["path_2"])}
 
     assert sorted_graph_edges == sorted_me_edges

@@ -135,9 +135,7 @@ def upgrade() -> None:
         unique=False,
         schema="gerrydb",
     )
-    op.create_index(
-        op.f("ix_gerrydb_view_path"), "view", ["path"], unique=False, schema="gerrydb"
-    )
+    op.create_index(op.f("ix_gerrydb_view_path"), "view", ["path"], unique=False, schema="gerrydb")
     op.create_table(
         "view_template_column_member",
         sa.Column("template_version_id", sa.Integer(), nullable=False),
@@ -176,9 +174,7 @@ def downgrade() -> None:
     op.drop_table("view_template_column_set_member", schema="gerrydb")
     op.drop_table("view_template_column_member", schema="gerrydb")
     op.drop_index(op.f("ix_gerrydb_view_path"), table_name="view", schema="gerrydb")
-    op.drop_index(
-        op.f("ix_gerrydb_view_namespace_id"), table_name="view", schema="gerrydb"
-    )
+    op.drop_index(op.f("ix_gerrydb_view_namespace_id"), table_name="view", schema="gerrydb")
     op.drop_table("view", schema="gerrydb")
     op.drop_table("view_template_version", schema="gerrydb")
 

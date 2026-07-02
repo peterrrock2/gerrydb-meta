@@ -109,9 +109,7 @@ def test_api_column_set_create__duplicate_column(ctx_public_namespace_read_write
             "columns": ["test", "test"],
         },
     )
-    assert (
-        create_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    ), create_response.json()
+    assert create_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, create_response.json()
 
 
 def test_api_column_set_create__aliased_duplicate_column(
@@ -130,9 +128,7 @@ def test_api_column_set_create__aliased_duplicate_column(
             "columns": ["tt", "test"],
         },
     )
-    assert (
-        create_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    ), create_response.json()
+    assert create_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, create_response.json()
 
 
 def test_api_column_set_create__missing_column(ctx_public_namespace_read_write):
@@ -147,9 +143,7 @@ def test_api_column_set_create__missing_column(ctx_public_namespace_read_write):
             "columns": ["bad"],
         },
     )
-    assert (
-        create_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    ), create_response.json()
+    assert create_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, create_response.json()
 
 
 def test_api_column_set_create__twice(ctx_public_namespace_read_write):
@@ -166,12 +160,10 @@ def test_api_column_set_create__twice(ctx_public_namespace_read_write):
     create_response = ctx.client.post(f"{COLUMN_SETS_ROOT}/{namespace}", json=body)
     assert create_response.status_code == HTTPStatus.CREATED, create_response.json()
 
-    create_twice_response = ctx.client.post(
-        f"{COLUMN_SETS_ROOT}/{namespace}", json=body
+    create_twice_response = ctx.client.post(f"{COLUMN_SETS_ROOT}/{namespace}", json=body)
+    assert create_twice_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, (
+        create_twice_response.json()
     )
-    assert (
-        create_twice_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    ), create_twice_response.json()
 
 
 def test_api_column_set_create_read__private_namespace(
@@ -203,7 +195,5 @@ def test_api_column_create_all__private_namespace(
     )
     assert create_response.status_code == HTTPStatus.CREATED, create_response.json()
 
-    all_response = ctx_public_namespace_read_write.client.get(
-        f"{COLUMN_SETS_ROOT}/{namespace}"
-    )
+    all_response = ctx_public_namespace_read_write.client.get(f"{COLUMN_SETS_ROOT}/{namespace}")
     assert all_response.status_code == HTTPStatus.NOT_FOUND, all_response.json()

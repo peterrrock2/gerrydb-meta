@@ -1,10 +1,10 @@
+import pytest
+from geoalchemy2 import WKBElement
+from shapely import Point, Polygon, wkb
+from shapely.geometry import box
+
 from gerrydb_meta import crud, schemas
 from gerrydb_meta.exceptions import *
-from shapely import Point, Polygon
-from shapely import wkb
-from shapely.geometry import box
-from geoalchemy2 import WKBElement
-import pytest
 
 square_corners = [(-1, -1), (1, -1), (1, 1), (-1, 1)]
 
@@ -178,9 +178,7 @@ def test_crud_geography_create_bulk_not_wkb_converted_fail(db_with_meta):
             namespace=ns,
             obj_meta=meta,
         )
-    assert "Value error, The geography must be of type bytes, got type Polygon" in str(
-        e.value
-    )
+    assert "Value error, The geography must be of type bytes, got type Polygon" in str(e.value)
 
 
 def test_crud_geography_patch_bulk_vacuous_update(db_with_meta):

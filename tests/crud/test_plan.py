@@ -1,8 +1,8 @@
-from gerrydb_meta import crud, schemas
-from shapely import Point, Polygon
 import pytest
-from gerrydb_meta.exceptions import CreateValueError
+from shapely import Point, Polygon
 
+from gerrydb_meta import crud, schemas
+from gerrydb_meta.exceptions import CreateValueError
 
 square_corners = [(-1, -1), (1, -1), (1, 1), (-1, 1)]
 
@@ -84,9 +84,7 @@ def test_plan_create(db_with_meta):
         obj_meta=meta,
     )
 
-    geo_set_version = crud.geo_layer.get_set_by_locality(
-        db=db, layer=geo_layer, locality=loc[0]
-    )
+    geo_set_version = crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0])
 
     plan, _ = crud.plan.create(
         db=db,
@@ -107,9 +105,9 @@ def test_plan_create(db_with_meta):
     )
 
     assert plan.num_districts == 2
-    assert set(
-        [(item.geo.full_path, item.assignment) for item in plan.assignments]
-    ) == set([("/atlantis/central_atlantis", "1"), ("/atlantis/western_atlantis", "2")])
+    assert set([(item.geo.full_path, item.assignment) for item in plan.assignments]) == set(
+        [("/atlantis/central_atlantis", "1"), ("/atlantis/western_atlantis", "2")]
+    )
 
 
 def test_plan_create_many_errors_after_100(db_with_meta):
@@ -172,9 +170,7 @@ def test_plan_create_many_errors_after_100(db_with_meta):
         obj_meta=meta,
     )
 
-    geo_set_version = crud.geo_layer.get_set_by_locality(
-        db=db, layer=geo_layer, locality=loc[0]
-    )
+    geo_set_version = crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0])
 
     for i in range(100):
         _ = crud.plan.create(
@@ -281,9 +277,7 @@ def test_plan_get(db_with_meta):
         obj_meta=meta,
     )
 
-    geo_set_version = crud.geo_layer.get_set_by_locality(
-        db=db, layer=geo_layer, locality=loc[0]
-    )
+    geo_set_version = crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0])
 
     plan, _ = crud.plan.create(
         db=db,
@@ -368,9 +362,7 @@ def test_plan_create_error_geos(db_with_meta):
         obj_meta=meta,
     )
 
-    geo_set_version = crud.geo_layer.get_set_by_locality(
-        db=db, layer=geo_layer, locality=loc[0]
-    )
+    geo_set_version = crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0])
 
     # Missing geos makes incomplete plan
     plan, _ = crud.plan.create(
@@ -490,9 +482,7 @@ def test_plan_create_dup_errors(db_with_meta):
         obj_meta=meta,
     )
 
-    geo_set_version = crud.geo_layer.get_set_by_locality(
-        db=db, layer=geo_layer, locality=loc[0]
-    )
+    geo_set_version = crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0])
 
     plan, _ = crud.plan.create(
         db=db,

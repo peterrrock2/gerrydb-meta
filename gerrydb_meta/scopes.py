@@ -2,9 +2,10 @@
 
 from dataclasses import dataclass
 
+from uvicorn.config import logger as log
+
 from gerrydb_meta.enums import NamespaceGroup, ScopeType
 from gerrydb_meta.models import Namespace, User
-from uvicorn.config import logger as log
 
 
 @dataclass
@@ -29,10 +30,7 @@ class ScopeManager:
             scope.scope
             for scope in self.user.scopes
             if scope.namespace_id is None
-            and (
-                scope.namespace_group is None
-                or scope.namespace_group == NamespaceGroup.ALL
-            )
+            and (scope.namespace_group is None or scope.namespace_group == NamespaceGroup.ALL)
         }
         group_group_scopes = {
             (scope.scope, scope.namespace_group)
@@ -51,10 +49,7 @@ class ScopeManager:
             for group in self.user.groups
             for scope in group.group.scopes
             if scope.namespace_id is None
-            and (
-                scope.namespace_group is None
-                or scope.namespace_group == NamespaceGroup.ALL
-            )
+            and (scope.namespace_group is None or scope.namespace_group == NamespaceGroup.ALL)
         }
         self._namespace_scopes = user_namespace_scopes | group_namespace_scopes
         self._namespace_group_scopes = user_group_scopes | group_group_scopes
@@ -87,9 +82,7 @@ class ScopeManager:
         ) or self.has_namespace_scope(ScopeType.NAMESPACE_WRITE, namespace)
 
     def can_read_in_public_namespaces(self) -> bool:
-        return self.has_namespace_group_scope(
-            ScopeType.NAMESPACE_READ, NamespaceGroup.PUBLIC
-        )
+        return self.has_namespace_group_scope(ScopeType.NAMESPACE_READ, NamespaceGroup.PUBLIC)
 
     def has_global_scope(self, scope: ScopeType) -> bool:
         """Does the user have the global scope `scope`?"""
@@ -108,9 +101,7 @@ class ScopeManager:
             self._namespace_scopes & candidates
         )
 
-    def has_namespace_group_scope(
-        self, scope: ScopeType, group: NamespaceGroup
-    ) -> bool:
+    def has_namespace_group_scope(self, scope: ScopeType, group: NamespaceGroup) -> bool:
         """Does the user have `scope` in `group`?"""
         candidates = {
             (scope, group),

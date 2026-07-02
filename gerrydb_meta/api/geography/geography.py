@@ -2,8 +2,10 @@
 
 from http import HTTPStatus
 from typing import Callable
-from fastapi import APIRouter, Depends, Response, Header, Query
+
+from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.orm import Session
+from uvicorn.config import logger as log
 
 from gerrydb_meta import crud, models, schemas
 from gerrydb_meta.api.base import (
@@ -14,7 +16,6 @@ from gerrydb_meta.api.base import (
 )
 from gerrydb_meta.api.deps import get_db, get_geo_import, get_obj_meta, get_scopes
 from gerrydb_meta.scopes import ScopeManager
-from uvicorn.config import logger as log
 
 
 class GeographyApi(NamespacedObjectApi):
@@ -36,9 +37,7 @@ class GeographyApi(NamespacedObjectApi):
             geo_import: models.GeoImport = Depends(get_geo_import),
             scopes: ScopeManager = Depends(get_scopes),
         ):
-            namespace_obj = self._namespace_with_write(
-                db=db, scopes=scopes, path=namespace
-            )
+            namespace_obj = self._namespace_with_write(db=db, scopes=scopes, path=namespace)
             log.debug("BEFORE CREATE BULK GEOMETRY")
             geos, etag = self.crud.create_bulk(
                 db=db,
@@ -52,9 +51,7 @@ class GeographyApi(NamespacedObjectApi):
                 schemas.Geography(
                     path=geo.path,
                     geography=(
-                        None
-                        if geo_version.geography is None
-                        else bytes(geo_version.geography.data)
+                        None if geo_version.geography is None else bytes(geo_version.geography.data)
                     ),
                     internal_point=(
                         None
@@ -89,9 +86,7 @@ class GeographyApi(NamespacedObjectApi):
             scopes: ScopeManager = Depends(get_scopes),
             allow_empty_polys: bool = Query(default=False),
         ):
-            namespace_obj = self._namespace_with_write(
-                db=db, scopes=scopes, path=namespace
-            )
+            namespace_obj = self._namespace_with_write(db=db, scopes=scopes, path=namespace)
             geos, etag = self.crud.patch_bulk(
                 db=db,
                 objs_in=raw_geographies,
@@ -104,9 +99,7 @@ class GeographyApi(NamespacedObjectApi):
                 schemas.Geography(
                     path=geo.path,
                     geography=(
-                        None
-                        if geo_version.geography is None
-                        else bytes(geo_version.geography.data)
+                        None if geo_version.geography is None else bytes(geo_version.geography.data)
                     ),
                     internal_point=(
                         None
@@ -139,9 +132,7 @@ class GeographyApi(NamespacedObjectApi):
             if_none_match: str | None = Header(default=None),
         ):
             log.debug("GET %s/%s", namespace, path)
-            namespace_obj = self._namespace_with_read(
-                db=db, scopes=scopes, path=namespace
-            )
+            namespace_obj = self._namespace_with_read(db=db, scopes=scopes, path=namespace)
             self._check_etag(db=db, namespace=namespace_obj, header=if_none_match)
             etag = self.crud.etag(db, namespace_obj)
             obj = self._obj(db=db, namespace=namespace_obj, path=path)

@@ -2,26 +2,25 @@
 
 import re
 import uuid
-from typing import Tuple
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import Tuple
 
 from sqlalchemy import (
     Sequence,
     exc,
+    insert,
     or_,
     select,
 )
-from sqlalchemy import insert
-from sqlalchemy.orm import Session
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.orm import Session
+from uvicorn.config import logger as log
 
 from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.exceptions import CreateValueError
-from typing import Tuple
-from datetime import datetime
-from uvicorn.config import logger as log
 
 _ST_ASBINARY_REGEX = re.compile(r"ST\_AsBinary\(([a-zA-Z0-9_.]+)\)")
 
@@ -57,8 +56,7 @@ class CRGraph(NamespacedCRBase[models.Graph, schemas.GraphCreate]):
         set_geo_ids = set(
             db.scalars(
                 select(models.GeoSetMember.geo_id).filter(
-                    models.GeoSetMember.set_version_id
-                    == geo_set_version.set_version_id,
+                    models.GeoSetMember.set_version_id == geo_set_version.set_version_id,
                 )
             )
         )
@@ -66,13 +64,10 @@ class CRGraph(NamespacedCRBase[models.Graph, schemas.GraphCreate]):
 
         if not_in_geo_set:
             bad_geo_paths = [
-                geo.full_path
-                for geo in edge_geos.values()
-                if geo.geo_id in not_in_geo_set
+                geo.full_path for geo in edge_geos.values() if geo.geo_id in not_in_geo_set
             ]
             raise CreateValueError(
-                "Geographies not associated with locality and layer: "
-                f"{', '.join(bad_geo_paths)}"
+                f"Geographies not associated with locality and layer: {', '.join(bad_geo_paths)}"
             )
 
         # Check to make sure that all of the edges exist in the set of geographies
@@ -131,14 +126,10 @@ class CRGraph(NamespacedCRBase[models.Graph, schemas.GraphCreate]):
     def all(self, db: Session, *, namespace: models.Namespace) -> list[models.View]:
         """Retrieves all views in a namespace."""
         return (
-            db.query(models.Graph)
-            .filter(models.Graph.namespace_id == namespace.namespace_id)
-            .all()
+            db.query(models.Graph).filter(models.Graph.namespace_id == namespace.namespace_id).all()
         )
 
-    def get(
-        self, db: Session, *, path: str, namespace: models.Namespace
-    ) -> models.Graph | None:
+    def get(self, db: Session, *, path: str, namespace: models.Namespace) -> models.Graph | None:
         """Retrieves a graph by path.
 
         Args:
@@ -229,9 +220,7 @@ class CRGraph(NamespacedCRBase[models.Graph, schemas.GraphCreate]):
                 models.GeoSetMember,
                 models.Geography.geo_id == models.GeoSetMember.geo_id,
             )
-            .join(
-                models.GeoVersion, models.Geography.geo_id == models.GeoVersion.geo_id
-            )
+            .join(models.GeoVersion, models.Geography.geo_id == models.GeoVersion.geo_id)
             .where(models.GeoSetMember.set_version_id == graph.set_version_id)
         )
 
@@ -273,9 +262,7 @@ class CRGraph(NamespacedCRBase[models.Graph, schemas.GraphCreate]):
             .select_from(models.GeoVersion)
             .join(members_sub, members_sub.c.geo_id == models.GeoVersion.geo_id)
             .join(geo_sub, geo_sub.c.geo_id == models.GeoVersion.geo_id)
-            .join(
-                models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id
-            )
+            .join(models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id)
         )
 
         geo_query = geo_query.distinct().where(*timestamp_clauses)
@@ -288,9 +275,7 @@ class CRGraph(NamespacedCRBase[models.Graph, schemas.GraphCreate]):
             .select_from(models.GeoVersion)
             .join(members_sub, members_sub.c.geo_id == models.GeoVersion.geo_id)
             .join(geo_sub, geo_sub.c.geo_id == models.GeoVersion.geo_id)
-            .join(
-                models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id
-            )
+            .join(models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id)
             .where(*timestamp_clauses)
         )
 

@@ -47,9 +47,7 @@ def test_api_geo_layer_create_all(ctx_public_namespace_read_write, geo_layer):
     assert read_body == create_body
 
 
-def test_api_geo_layer_create_read__scope_read_only(
-    ctx_public_namespace_read_only, geo_layer
-):
+def test_api_geo_layer_create_read__scope_read_only(ctx_public_namespace_read_only, geo_layer):
     ctx = ctx_public_namespace_read_only
     namespace = ctx.namespace.path
 
@@ -67,12 +65,10 @@ def test_api_geo_layer_create__twice(ctx_public_namespace_read_write, geo_layer)
     create_response = ctx.client.post(f"{GEO_LAYERS_ROOT}/{namespace}", json=geo_layer)
     assert create_response.status_code == HTTPStatus.CREATED, create_response.json()
 
-    create_twice_response = ctx.client.post(
-        f"{GEO_LAYERS_ROOT}/{namespace}", json=geo_layer
+    create_twice_response = ctx.client.post(f"{GEO_LAYERS_ROOT}/{namespace}", json=geo_layer)
+    assert create_twice_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, (
+        create_twice_response.json()
     )
-    assert (
-        create_twice_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    ), create_twice_response.json()
 
 
 def test_api_geo_layer_create_read__private_namespace(
@@ -103,9 +99,7 @@ def test_api_geo_layer_create_all__private_namespace(
     private_ctx = ctx_private_namespace_read_write
     namespace = private_ctx.namespace.path
 
-    create_response = private_ctx.client.post(
-        f"{GEO_LAYERS_ROOT}/{namespace}", json=geo_layer
-    )
+    create_response = private_ctx.client.post(f"{GEO_LAYERS_ROOT}/{namespace}", json=geo_layer)
     assert create_response.status_code == HTTPStatus.CREATED, create_response.json()
 
     all_response = public_ctx.client.get(f"{GEO_LAYERS_ROOT}/{namespace}")

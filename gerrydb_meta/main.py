@@ -1,11 +1,15 @@
 """Entrypoint for Gerry API server."""
 
+import gzip
+import json
 from http import HTTPStatus
+from io import BytesIO
 
 from fastapi import FastAPI, Request
-from starlette.responses import StreamingResponse
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from starlette.responses import StreamingResponse
+from uvicorn.config import logger as log
 
 from gerrydb_meta.api import api_router
 from gerrydb_meta.exceptions import (
@@ -14,12 +18,6 @@ from gerrydb_meta.exceptions import (
     ColumnValueTypeError,
     CreateValueError,
 )
-
-from uvicorn.config import logger as log
-
-from io import BytesIO
-import json
-import gzip
 
 API_PREFIX = "/api/v1"
 
@@ -184,7 +182,5 @@ def health_check():  # pragma: no cover
 
 @app.get("/middlewares")
 def list_middlewares():  # pragma: no cover
-    middleware_info = [
-        {"class": str(m.cls), "options": m.options} for m in app.user_middleware
-    ]
+    middleware_info = [{"class": str(m.cls), "options": m.options} for m in app.user_middleware]
     return {"middlewares": middleware_info}

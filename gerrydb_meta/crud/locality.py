@@ -95,9 +95,7 @@ class CRLocality(CRBase[models.Locality, schemas.LocalityCreate]):
                                 "parent_id": (
                                     None
                                     if obj_in.parent_path is None
-                                    else parent_ref_loc_ids[
-                                        normalize_path(obj_in.parent_path)
-                                    ]
+                                    else parent_ref_loc_ids[normalize_path(obj_in.parent_path)]
                                 ),
                                 "meta_id": obj_meta.meta_id,
                                 "name": obj_in.name,
@@ -121,10 +119,7 @@ class CRLocality(CRBase[models.Locality, schemas.LocalityCreate]):
                 update(models.LocalityRef)
                 .where(models.LocalityRef.ref_id == bindparam("_ref_id"))
                 .values({"loc_id": bindparam("loc_id")}),
-                [
-                    {"loc_id": loc.loc_id, "_ref_id": loc.canonical_ref_id}
-                    for loc in locs
-                ],
+                [{"loc_id": loc.loc_id, "_ref_id": loc.canonical_ref_id} for loc in locs],
             )
 
             # Add aliases in bulk.
@@ -136,9 +131,7 @@ class CRLocality(CRBase[models.Locality, schemas.LocalityCreate]):
                             {
                                 "path": normalize_path(alias),
                                 "meta_id": obj_meta.meta_id,
-                                "loc_id": loc_ids_by_path[
-                                    normalize_path(obj_in.canonical_path)
-                                ],
+                                "loc_id": loc_ids_by_path[normalize_path(obj_in.canonical_path)],
                             }
                         )
 
@@ -147,9 +140,7 @@ class CRLocality(CRBase[models.Locality, schemas.LocalityCreate]):
                     db.execute(insert(models.LocalityRef), aliases)
                 except exc.SQLAlchemyError:  # pragma: no cover
                     log.exception("Failed to create aliases for new location(s).")
-                    raise CreateValueError(
-                        "Failed to create aliases for new location(s)."
-                    )
+                    raise CreateValueError("Failed to create aliases for new location(s).")
 
             etag = self._update_etag(db)
 

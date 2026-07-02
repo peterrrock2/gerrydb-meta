@@ -29,16 +29,12 @@ api_router.include_router(
 api_router.include_router(
     geography.fork_router, prefix="/__geography_fork", tags=["geography_fork"]
 )
-api_router.include_router(
-    geo_import.router, prefix="/geo-imports", tags=["geo-imports"]
-)
+api_router.include_router(geo_import.router, prefix="/geo-imports", tags=["geo-imports"])
 api_router.include_router(column_value.router, prefix="/columns", tags=["columns"])
 api_router.include_router(geo_set.router, prefix="/layers", tags=["layers"])
 api_router.include_router(plan.router, prefix="/plans", tags=["plans"])
 api_router.include_router(view.router, prefix="/views", tags=["views"])
-api_router.include_router(
-    view_template.router, prefix="/view-templates", tags=["view-templates"]
-)
+api_router.include_router(view_template.router, prefix="/view-templates", tags=["view-templates"])
 api_router.include_router(graph.router, prefix="/graphs", tags=["graphs"])
 
 

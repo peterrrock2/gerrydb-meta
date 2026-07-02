@@ -50,9 +50,7 @@ def unit_box_msgpack(unit_box_wkb):
     return msgpack.dumps([{"path": "box", "geography": unit_box_wkb}])
 
 
-def test_api_geography_create_read(
-    ctx_public_namespace_read_write, unit_box, unit_box_msgpack
-):
+def test_api_geography_create_read(ctx_public_namespace_read_write, unit_box, unit_box_msgpack):
     ctx = ctx_public_namespace_read_write
     namespace = ctx.namespace.path
 
@@ -61,9 +59,7 @@ def test_api_geography_create_read(
         headers=headers(ctx),
         content=unit_box_msgpack,
     )
-    assert create_response.status_code == HTTPStatus.CREATED, msgpack.loads(
-        create_response.content
-    )
+    assert create_response.status_code == HTTPStatus.CREATED, msgpack.loads(create_response.content)
 
     create_body = schemas.Geography(**msgpack.loads(create_response.content)[0])
 
@@ -89,9 +85,7 @@ def test_api_geography_create_all(ctx_public_namespace_read_write, unit_box_msgp
         headers=headers(ctx),
         content=unit_box_msgpack,
     )
-    assert create_response.status_code == HTTPStatus.CREATED, msgpack.loads(
-        create_response.content
-    )
+    assert create_response.status_code == HTTPStatus.CREATED, msgpack.loads(create_response.content)
     create_body = schemas.Geography(**msgpack.loads(create_response.content)[0])
 
     all_response = ctx.client.get(f"{GEOS_ROOT}/{namespace}")
@@ -124,9 +118,7 @@ def test_api_geography_create__internal_point(
             ]
         ),
     )
-    assert create_response.status_code == HTTPStatus.CREATED, msgpack.loads(
-        create_response.content
-    )
+    assert create_response.status_code == HTTPStatus.CREATED, msgpack.loads(create_response.content)
 
     create_body = schemas.Geography(**msgpack.loads(create_response.content)[0])
     assert create_body.path == "box"
@@ -142,13 +134,9 @@ def test_api_geography_create__missing_geos(ctx_public_namespace_read_write):
     create_response = ctx.client.post(
         f"{GEOS_ROOT}/{namespace}",
         headers=headers(ctx),
-        content=msgpack.dumps(
-            [{"path": "box", "geography": None, "internal_point": None}]
-        ),
+        content=msgpack.dumps([{"path": "box", "geography": None, "internal_point": None}]),
     )
-    assert create_response.status_code == HTTPStatus.CREATED, msgpack.loads(
-        create_response.content
-    )
+    assert create_response.status_code == HTTPStatus.CREATED, msgpack.loads(create_response.content)
 
     create_body = schemas.Geography(**msgpack.loads(create_response.content)[0])
     assert create_body.internal_point == Point().wkb
@@ -166,9 +154,7 @@ def test_api_geography_create__malformed_wkb(ctx_public_namespace_read_write):
             [{"path": "box", "geography": b"123"}]  # not a valid WKB-encoded geometry
         ),
     )
-    assert (
-        create_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    ), create_response.json()
+    assert create_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, create_response.json()
 
 
 def test_api_geography_create__twice(ctx_public_namespace_read_write, unit_box_msgpack):
@@ -187,9 +173,9 @@ def test_api_geography_create__twice(ctx_public_namespace_read_write, unit_box_m
         headers=headers(ctx),
         content=unit_box_msgpack,
     )
-    assert (
-        create_twice_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    ), create_twice_response.json()
+    assert create_twice_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, (
+        create_twice_response.json()
+    )
 
 
 def test_api_geography_create_patch(ctx_public_namespace_read_write, unit_box_msgpack):
@@ -201,9 +187,7 @@ def test_api_geography_create_patch(ctx_public_namespace_read_write, unit_box_ms
         headers=headers(ctx),
         content=unit_box_msgpack,
     )
-    assert create_response.status_code == HTTPStatus.CREATED, msgpack.loads(
-        create_response.content
-    )
+    assert create_response.status_code == HTTPStatus.CREATED, msgpack.loads(create_response.content)
     create_body = schemas.Geography(**msgpack.loads(create_response.content)[0])
 
     # Implicitly create a new GeoVersion for the geography.
@@ -222,9 +206,7 @@ def test_api_geography_create_patch(ctx_public_namespace_read_write, unit_box_ms
             ]
         ),
     )
-    assert patch_response.status_code == HTTPStatus.OK, msgpack.loads(
-        patch_response.content
-    )
+    assert patch_response.status_code == HTTPStatus.OK, msgpack.loads(patch_response.content)
 
     patch_body = schemas.Geography(**msgpack.loads(patch_response.content)[0])
     assert shapely.wkb.loads(patch_body.geography) == shifted_unit_box
@@ -232,18 +214,14 @@ def test_api_geography_create_patch(ctx_public_namespace_read_write, unit_box_ms
     assert patch_body.valid_from > create_body.valid_from
 
 
-def test_api_geography_patch__nonexistent(
-    ctx_public_namespace_read_write, unit_box_msgpack
-):
+def test_api_geography_patch__nonexistent(ctx_public_namespace_read_write, unit_box_msgpack):
     ctx = ctx_public_namespace_read_write
     patch_response = ctx.client.patch(
         f"{GEOS_ROOT}/{ctx.namespace.path}",
         headers=headers(ctx),
         content=unit_box_msgpack,
     )
-    assert (
-        patch_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    ), patch_response.json()
+    assert patch_response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, patch_response.json()
 
 
 def test_api_geography_create_read__private_namespace(
@@ -260,9 +238,7 @@ def test_api_geography_create_read__private_namespace(
     )
     assert create_response.status_code == HTTPStatus.CREATED, create_response.json()
 
-    read_response = ctx_public_namespace_read_write.client.get(
-        f"{GEOS_ROOT}/{namespace}/box"
-    )
+    read_response = ctx_public_namespace_read_write.client.get(f"{GEOS_ROOT}/{namespace}/box")
     assert read_response.status_code == HTTPStatus.NOT_FOUND, read_response.json()
 
 
@@ -280,9 +256,7 @@ def test_api_geography_create_all__private_namespace(
     )
     assert create_response.status_code == HTTPStatus.CREATED, create_response.json()
 
-    all_response = ctx_public_namespace_read_write.client.get(
-        f"{GEOS_ROOT}/{namespace}"
-    )
+    all_response = ctx_public_namespace_read_write.client.get(f"{GEOS_ROOT}/{namespace}")
     assert all_response.status_code == HTTPStatus.NOT_FOUND, all_response.json()
 
 

@@ -1,13 +1,15 @@
-import pytest
 import inspect
 import uuid
 from http import HTTPStatus
-from fastapi import Response, HTTPException
+
+import pytest
+from fastapi import HTTPException, Response
 from pydantic import BaseModel
-from gerrydb_meta.api.base import *
+
 import gerrydb_meta.api.base as base
-from gerrydb_meta.api.deps import get_scopes
 from gerrydb_meta import crud
+from gerrydb_meta.api.base import *
+from gerrydb_meta.api.deps import get_scopes
 
 # Dummy classes for testing
 db_dummy = object()
@@ -168,9 +170,7 @@ class DenyScopes:
 
 def setup_dummy_namespace(monkeypatch):
     monkeypatch.setattr(base, "normalize_path", lambda p, case_sensitive_uid: p)
-    monkeypatch.setattr(
-        base.crud.namespace, "get", lambda db, path: DummyNamespaceObj(path)
-    )
+    monkeypatch.setattr(base.crud.namespace, "get", lambda db, path: DummyNamespaceObj(path))
 
 
 def test_from_resource_paths_success_bulk(monkeypatch):
@@ -208,9 +208,7 @@ def test_from_resource_paths_success_fallback(monkeypatch):
     paths = ["geographies/ns/x", "geographies/ns/y"]
     ref_map = {("ns", "x"): DummyObj("ns", "x")}
     obj_map = {("ns", "y"): DummyObj("ns", "y")}
-    monkeypatch.setitem(
-        base.ENDPOINT_TO_CRUD, "geographies", DummyCRUDFallback(ref_map, obj_map)
-    )
+    monkeypatch.setitem(base.ENDPOINT_TO_CRUD, "geographies", DummyCRUDFallback(ref_map, obj_map))
     with pytest.raises(HTTPException):
         from_resource_paths(paths, db_dummy, DummyScopes(), follow_refs=False)
 
@@ -244,9 +242,7 @@ def test_namespace_with_read(ctx_private_namespace_read_only):
 
     scopes = get_scopes(ctx.admin_user)
     # test_namespace_with_read
-    with pytest.raises(
-        HTTPException, match='Namespace "bad_test_namespace_with_read" not found,'
-    ):
+    with pytest.raises(HTTPException, match='Namespace "bad_test_namespace_with_read" not found,'):
         _ = base.namespace_with_read(
             db=ctx.db,
             scopes=scopes,
@@ -346,9 +342,7 @@ def test_layer_not_found(db, dummy_scopes_allow, monkeypatch, dummy_namespace):
     assert exc.value.detail == "Geographic layer not found."
 
 
-def test_no_set_for_locality_and_layer(
-    db, dummy_scopes_allow, monkeypatch, dummy_namespace
-):
+def test_no_set_for_locality_and_layer(db, dummy_scopes_allow, monkeypatch, dummy_namespace):
     monkeypatch.setattr(crud.locality, "get_by_ref", lambda db, path: object())
     monkeypatch.setattr(base, "parse_path", lambda layer: ("x", "lay"))
     monkeypatch.setattr(
@@ -381,12 +375,12 @@ def test_no_set_for_locality_and_layer(
     )
 
 
-import pytest
-import msgpack
-from fastapi import FastAPI, Request, APIRouter
-from starlette.testclient import TestClient
 from http import HTTPStatus
 
+import msgpack
+import pytest
+from fastapi import APIRouter, FastAPI, Request
+from starlette.testclient import TestClient
 
 # Create an APIRouter that uses your MsgpackRoute
 router = APIRouter(
@@ -419,9 +413,7 @@ def test_unsupported_media_type_error():
     """Wrong or missing content-type → 415"""
     resp = client.post("/echo", content=b"\x00\x01\x02")
     assert resp.status_code == HTTPStatus.UNSUPPORTED_MEDIA_TYPE
-    assert resp.json() == {
-        "detail": "Only MessagePack requests are supported by this endpoint."
-    }
+    assert resp.json() == {"detail": "Only MessagePack requests are supported by this endpoint."}
 
 
 def test_invalid_msgpack_body_error():
@@ -516,8 +508,7 @@ def test_read_private_cross_namespace(monkeypatch, private_ns):
         )
     assert exc.value.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
     assert exc.value.detail == (
-        "Cannot join across private namespaces: "
-        f"namespace {private_ns.path} is private."
+        f"Cannot join across private namespaces: namespace {private_ns.path} is private."
     )
 
 
@@ -583,8 +574,7 @@ def test_write_private_cross_namespace(monkeypatch, private_ns):
         )
     assert exc.value.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
     assert exc.value.detail == (
-        "Cannot join across private namespaces: "
-        f"namespace {private_ns.path} is private."
+        f"Cannot join across private namespaces: namespace {private_ns.path} is private."
     )
 
 

@@ -4,18 +4,20 @@ do not get checked in the other tests. Namely, the various error codes that
 can be returned by the API.
 """
 
+import hashlib
+import uuid
+from datetime import datetime
+
 import pytest
 from fastapi import HTTPException
-from gerrydb_meta.models import ApiKey, User, ObjectMeta, GeoImport, Namespace
+
 from gerrydb_meta.api.deps import (
-    get_user,
-    get_obj_meta,
     get_geo_import,
+    get_obj_meta,
     get_scopes,
+    get_user,
 )
-import hashlib
-from datetime import datetime
-import uuid
+from gerrydb_meta.models import ApiKey, GeoImport, Namespace, ObjectMeta, User
 
 
 def test_get_user_errors(ctx_no_scopes):
@@ -53,14 +55,10 @@ def test_get_obj_meta(ctx_no_scopes):
     with pytest.raises(HTTPException, match="Object metadata ID required"):
         get_obj_meta(db=db, user=admin, x_gerrydb_meta_id=None)
 
-    with pytest.raises(
-        HTTPException, match="Object metadata ID is not a valid UUID hex string."
-    ):
+    with pytest.raises(HTTPException, match="Object metadata ID is not a valid UUID hex string."):
         get_obj_meta(db=db, user=admin, x_gerrydb_meta_id="bad_uuid")
 
-    with pytest.raises(
-        HTTPException, match="Metadata object could not be found in the database."
-    ):
+    with pytest.raises(HTTPException, match="Metadata object could not be found in the database."):
         get_obj_meta(db=db, user=admin, x_gerrydb_meta_id="1" * 32)
 
     user = ctx_no_scopes.user
@@ -87,21 +85,13 @@ def test_get_geo_import(ctx_no_scopes):
     admin_scopes = get_scopes(admin)
 
     with pytest.raises(HTTPException, match="GeoImport ID required"):
-        get_geo_import(
-            db=db, user=admin, scopes=admin_scopes, x_gerrydb_geo_import_id=None
-        )
+        get_geo_import(db=db, user=admin, scopes=admin_scopes, x_gerrydb_geo_import_id=None)
 
-    with pytest.raises(
-        HTTPException, match="GeoImport ID is not a valid UUID hex string."
-    ):
-        get_geo_import(
-            db=db, user=admin, scopes=admin_scopes, x_gerrydb_geo_import_id="bad_uuid"
-        )
+    with pytest.raises(HTTPException, match="GeoImport ID is not a valid UUID hex string."):
+        get_geo_import(db=db, user=admin, scopes=admin_scopes, x_gerrydb_geo_import_id="bad_uuid")
 
     with pytest.raises(HTTPException, match="Unknown GeoImport ID"):
-        get_geo_import(
-            db=db, user=admin, scopes=admin_scopes, x_gerrydb_geo_import_id="1" * 32
-        )
+        get_geo_import(db=db, user=admin, scopes=admin_scopes, x_gerrydb_geo_import_id="1" * 32)
 
     user = ctx_no_scopes.user
     new_uuid = uuid.uuid4()

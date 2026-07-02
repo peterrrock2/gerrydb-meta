@@ -6,31 +6,31 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
 from sqlalchemy import (
     Sequence,
+    bindparam,
     exc,
+    exists,
     func,
+    insert,
     label,
     or_,
     select,
-    exists,
     union,
-    bindparam,
 )
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.orm import Session
-from sqlalchemy import insert
-from sqlalchemy.sql import column
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+from sqlalchemy.sql import column
+from uvicorn.config import logger as log
 
 from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.crud.column import COLUMN_TYPE_TO_VALUE_COLUMN
 from gerrydb_meta.enums import ViewRenderStatus
 from gerrydb_meta.exceptions import CreateValueError, ViewConflictError
-from uvicorn.config import logger as log
 
 _ST_ASBINARY_REGEX = re.compile(r"ST\_AsBinary\(([a-zA-Z0-9_.]+)\)")
 
@@ -39,9 +39,7 @@ PLAN_BATCH_SIZE = 10000
 GRAPH_BATCH_SIZE = 100000
 
 
-def _view_columns(
-    db: Session, template_version_id: int
-) -> dict[str, models.DataColumn]:
+def _view_columns(db: Session, template_version_id: int) -> dict[str, models.DataColumn]:
     """Gets the unique columns associated with a `ViewTemplateVersion` by alias."""
     column_ref_ids = select(models.ViewTemplateColumnMember.ref_id).filter(
         models.ViewTemplateColumnMember.template_version_id == template_version_id
@@ -74,17 +72,11 @@ def _view_columns(
     col_id_to_alias = {}
     for row in column_ids_with_paths:
         alias = (
-            f"{row.namespace}__{row.path}"
-            if len(namespaces_by_path[row.path]) > 1
-            else row.path
+            f"{row.namespace}__{row.path}" if len(namespaces_by_path[row.path]) > 1 else row.path
         )
         col_id_to_alias[row.col_id] = alias
 
-    raw_columns = (
-        db.query(models.DataColumn)
-        .filter(models.DataColumn.col_id.in_(column_ids))
-        .all()
-    )
+    raw_columns = db.query(models.DataColumn).filter(models.DataColumn.col_id.in_(column_ids)).all()
     return {col_id_to_alias[col.col_id]: col for col in raw_columns}
 
 
@@ -124,8 +116,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 )
                 .join(
                     models.GeoSetMember,
-                    models.GeoSetVersion.set_version_id
-                    == models.GeoSetMember.set_version_id,
+                    models.GeoSetVersion.set_version_id == models.GeoSetMember.set_version_id,
                 )
                 .join(
                     models.GeoVersion,
@@ -172,8 +163,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
             .join(
                 models.GeoSetMember,
-                models.GeoSetMember.set_version_id
-                == models.GeoSetVersion.set_version_id,
+                models.GeoSetMember.set_version_id == models.GeoSetVersion.set_version_id,
             )
             .join(
                 models.Geography,
@@ -189,8 +179,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
             .filter(
                 or_(
-                    models.ViewTemplateColumnMember.template_version_id
-                    == template_version_id,
+                    models.ViewTemplateColumnMember.template_version_id == template_version_id,
                 )
             )
         )
@@ -209,8 +198,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
             .join(
                 models.GeoSetMember,
-                models.GeoSetMember.set_version_id
-                == models.GeoSetVersion.set_version_id,
+                models.GeoSetMember.set_version_id == models.GeoSetVersion.set_version_id,
             )
             .join(
                 models.Geography,
@@ -226,13 +214,11 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
             .join(
                 models.ViewTemplateColumnSetMember,
-                models.ViewTemplateColumnSetMember.set_id
-                == models.ColumnSetMember.set_id,
+                models.ViewTemplateColumnSetMember.set_id == models.ColumnSetMember.set_id,
             )
             .filter(
                 or_(
-                    models.ViewTemplateColumnSetMember.template_version_id
-                    == template_version_id,
+                    models.ViewTemplateColumnSetMember.template_version_id == template_version_id,
                 )
             )
         )
@@ -280,8 +266,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
             .join(
                 models.GeoSetMember,
-                models.GeoSetMember.set_version_id
-                == models.GeoSetVersion.set_version_id,
+                models.GeoSetMember.set_version_id == models.GeoSetVersion.set_version_id,
             )
             .join(
                 models.Geography,
@@ -383,9 +368,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
     ) -> Tuple[models.View, uuid.UUID]:
         """Creates a new view."""
         log.debug("TOP OF CR CREATE")
-        valid_at = (
-            datetime.now(timezone.utc) if obj_in.valid_at is None else obj_in.valid_at
-        )
+        valid_at = datetime.now(timezone.utc) if obj_in.valid_at is None else obj_in.valid_at
         if valid_at > datetime.now(timezone.utc):
             raise CreateValueError("Cannot instantiate view in the future.")
 
@@ -403,9 +386,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             .scalar()
         )
         if template_version_id is None:
-            raise CreateValueError(
-                "No template version found satisfying time constraints."
-            )
+            raise CreateValueError("No template version found satisfying time constraints.")
 
         (
             all_set_version_ids,
@@ -445,9 +426,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 models.ColumnValue.col_id,
                 label("num_geos", func.count(models.ColumnValue.geo_id)),
             )
-            .join(
-                geo_set_members, geo_set_members.c.geo_id == models.ColumnValue.geo_id
-            )
+            .join(geo_set_members, geo_set_members.c.geo_id == models.ColumnValue.geo_id)
             .filter(
                 models.ColumnValue.col_id.in_(bindparam("col_ids", expanding=True)),
                 models.ColumnValue.valid_from <= valid_at,
@@ -484,13 +463,11 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
             raise CreateValueError(
                 "Cannot instantiate view: column values satisfying all constraints "
-                "constraints not available for all geographies. Bad columns: "
-                + bad_cols_formatted
+                "constraints not available for all geographies. Bad columns: " + bad_cols_formatted
             )
 
         canonical_path = normalize_path(obj_in.path)
         with db.begin(nested=True):
-
             view = models.View(
                 path=canonical_path,
                 namespace_id=namespace.namespace_id,
@@ -530,13 +507,9 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                         {"view_id": view.view_id, "set_version_id": set_ver_id}
                         for set_ver_id in set(all_set_version_ids)
                     ]
-                    db.execute(
-                        insert(models.ViewGeoSetVersions).values(geo_set_version_data)
-                    )
+                    db.execute(insert(models.ViewGeoSetVersions).values(geo_set_version_data))
             except SQLAlchemyError as e:  # pragma: no cover
-                log.exception(
-                    "Failed to insert view_set_versions for view '%s'.", view.view_id
-                )
+                log.exception("Failed to insert view_set_versions for view '%s'.", view.view_id)
                 # Raise a new error (or your custom error) if the insert fails.
                 raise CreateValueError(
                     f"Failed to create view set versions for view '{view.view_id}'."
@@ -546,9 +519,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
 
         return view, etag
 
-    def get(
-        self, db: Session, *, path: str, namespace: models.Namespace
-    ) -> models.View | None:
+    def get(self, db: Session, *, path: str, namespace: models.Namespace) -> models.View | None:
         """Retrieves a view by reference path.
 
         Args:
@@ -567,9 +538,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
     def all(self, db: Session, *, namespace: models.Namespace) -> list[models.View]:
         """Retrieves all views in a namespace."""
         return (
-            db.query(models.View)
-            .filter(models.View.namespace_id == namespace.namespace_id)
-            .all()
+            db.query(models.View).filter(models.View.namespace_id == namespace.namespace_id).all()
         )
 
     def _create_render(
@@ -633,9 +602,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             status=ViewRenderStatus.PENDING,
         )
 
-    def get_cached_render(
-        self, db: Session, *, view: models.View
-    ) -> models.ViewRender | None:
+    def get_cached_render(self, db: Session, *, view: models.View) -> models.ViewRender | None:
         """Retrieves metadata for a cached view render, if available."""
         return (
             db.query(models.ViewRender)
@@ -856,13 +823,9 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         col_agg_selects = []
         column_aliases = []
         for alias, col in columns.items():
-            value_col = getattr(
-                models.ColumnValue, COLUMN_TYPE_TO_VALUE_COLUMN[col.type]
-            )
+            value_col = getattr(models.ColumnValue, COLUMN_TYPE_TO_VALUE_COLUMN[col.type])
             col_agg_selects.append(
-                func.max(value_col)
-                .filter(models.ColumnValue.col_id == col.col_id)
-                .label(alias)
+                func.max(value_col).filter(models.ColumnValue.col_id == col.col_id).label(alias)
             )
             column_aliases.append(alias)
 
@@ -939,9 +902,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         plans, plan_labels, plan_assignments = self._plans(
             db, view, view_set_version_ids=view_set_version_ids
         )
-        geo_meta_ids, geo_meta = self._geo_meta(
-            db, view, view_set_version_ids=view_set_version_ids
-        )
+        geo_meta_ids, geo_meta = self._geo_meta(db, view, view_set_version_ids=view_set_version_ids)
         geo_valid_from_dates = self._geo_valid_dates(
             db, view, view_set_version_ids=view_set_version_ids
         )
@@ -1112,10 +1073,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         visible_plans = [
             plan
             for plan in plans
-            if (
-                plan.namespace.public
-                or plan.namespace.namespace_id == view.namespace.namespace_id
-            )
+            if (plan.namespace.public or plan.namespace.namespace_id == view.namespace.namespace_id)
         ]
 
         # Get plan assignments as a table.

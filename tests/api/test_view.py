@@ -1,16 +1,16 @@
 """Tests for GerryDB REST API view template endpoints."""
 
-from http import HTTPStatus
-import networkx as nx
 import logging
+from http import HTTPStatus
+
+import networkx as nx
 from shapely import box
 from shapely.geometry import Point, Polygon
-import logging
 
+import gerrydb_meta.models as models
 from gerrydb_meta import crud, schemas
 from gerrydb_meta.enums import ColumnKind, ColumnType
 from gerrydb_meta.main import API_PREFIX
-import gerrydb_meta.models as models
 
 VIEW_TEMPLATES_ROOT = f"{API_PREFIX}/views"
 
@@ -22,9 +22,7 @@ def test_view_make_and_get_cached_render(ctx_superuser):
     db.add(user)
     db.flush()
 
-    api_key = models.ApiKey(
-        key_hash=b"view_test_api_key", user_id=user.user_id, user=user
-    )
+    api_key = models.ApiKey(key_hash=b"view_test_api_key", user_id=user.user_id, user=user)
     db.add(api_key)
     db.flush()
 
@@ -112,9 +110,7 @@ def test_view_make_and_get_cached_render(ctx_superuser):
                 for (a, b), attr in grid_graph.edges.items()
             ],
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={"central": geo[0][0], "western": geo[1][0]},
         obj_meta=meta,
         namespace=ns,
@@ -336,9 +332,7 @@ def test_api_view_create_get_errors(ctx_superuser, caplog):
                 for (a, b), attr in grid_graph.edges.items()
             ],
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={"central": geo[0][0], "western": geo[1][0]},
         obj_meta=meta,
         namespace=ns,
@@ -711,9 +705,7 @@ def test_api_view_create_multiple_get_all(ctx_superuser):
                 for (a, b), attr in grid_graph.edges.items()
             ],
         ),
-        geo_set_version=crud.geo_layer.get_set_by_locality(
-            db=db, layer=geo_layer, locality=loc[0]
-        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
         edge_geos={"central": geo[0][0], "western": geo[1][0]},
         obj_meta=meta,
         namespace=ns,

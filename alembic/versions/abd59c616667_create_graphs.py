@@ -103,11 +103,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_column("view", "graph_id", schema="gerrydb")
     op.drop_table("graph_edge", schema="gerrydb")
-    op.drop_index(
-        op.f("ix_gerrydb_graph_set_version_id"), table_name="graph", schema="gerrydb"
-    )
+    op.drop_index(op.f("ix_gerrydb_graph_set_version_id"), table_name="graph", schema="gerrydb")
     op.drop_index(op.f("ix_gerrydb_graph_path"), table_name="graph", schema="gerrydb")
-    op.drop_index(
-        op.f("ix_gerrydb_graph_namespace_id"), table_name="graph", schema="gerrydb"
-    )
+    op.drop_index(op.f("ix_gerrydb_graph_namespace_id"), table_name="graph", schema="gerrydb")
     op.drop_table("graph", schema="gerrydb")

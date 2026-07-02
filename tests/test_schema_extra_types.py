@@ -1,14 +1,15 @@
 import pytest
 from pydantic import BaseModel, ValidationError
+
 from gerrydb_meta.schemas import (
-    UserEmail,
-    NameStr,
     Description,
-    ShortStr,
-    GerryPath,
-    NamespacedGerryPath,
-    NamespacedGerryGeoPath,
     GeoNameStr,
+    GerryPath,
+    NamespacedGerryGeoPath,
+    NamespacedGerryPath,
+    NameStr,
+    ShortStr,
+    UserEmail,
 )
 
 

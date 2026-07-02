@@ -1,6 +1,5 @@
-from gerrydb_meta import crud, schemas
+from gerrydb_meta import crud, models, schemas
 from gerrydb_meta.enums import ColumnKind, ColumnType
-from gerrydb_meta import models
 
 
 def make_atlantis_ns(db, meta):

@@ -8,24 +8,24 @@ objects in the specified layer and locality. This has some query parameters that
 return of the path, the path-hash pair, or a comparison of layers in two different namespaces.
 """
 
-from http import HTTPStatus
+from datetime import datetime, timezone
 from enum import Enum
+from http import HTTPStatus
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from datetime import datetime, timezone
-from typing import Optional, Annotated
+from sqlalchemy.orm import Session
+from uvicorn.config import logger as log
 
-from gerrydb_meta import crud
 import gerrydb_meta.models as models
+from gerrydb_meta import crud
 from gerrydb_meta.api.deps import (
     can_read_localities,
     get_db,
     get_scopes,
 )
 from gerrydb_meta.scopes import ScopeManager
-from uvicorn.config import logger as log
 
 list_router = APIRouter()
 
@@ -98,29 +98,20 @@ def __get_paths(
             )
             .join(
                 models.GeoSetVersion,
-                models.GeoSetMember.set_version_id
-                == models.GeoSetVersion.set_version_id,
+                models.GeoSetMember.set_version_id == models.GeoSetVersion.set_version_id,
             )
-            .join(
-                models.GeoVersion, models.Geography.geo_id == models.GeoVersion.geo_id
-            )
+            .join(models.GeoVersion, models.Geography.geo_id == models.GeoVersion.geo_id)
             .join(
                 models.GeoLayer,
                 models.GeoSetVersion.layer_id == models.GeoLayer.layer_id,
             )
-            .join(
-                models.Locality, models.GeoSetVersion.loc_id == models.Locality.loc_id
-            )
-            .join(
-                models.LocalityRef, models.LocalityRef.loc_id == models.Locality.loc_id
-            )
+            .join(models.Locality, models.GeoSetVersion.loc_id == models.Locality.loc_id)
+            .join(models.LocalityRef, models.LocalityRef.loc_id == models.Locality.loc_id)
             .join(
                 models.Namespace,
                 models.GeoLayer.namespace_id == models.Namespace.namespace_id,
             )
-            .join(
-                models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id
-            )
+            .join(models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id)
             .filter(models.Namespace.path == namespace)
             .filter(models.GeoLayer.path == layer)
             .filter(models.LocalityRef.path == loc_ref)
@@ -161,9 +152,7 @@ def all_paths(
     view_namespace_obj = crud.namespace.get(db=db, path=namespace)
 
     log.debug("IN THE ALL PATHS WITH MODE %s", mode)
-    if view_namespace_obj is None or not scopes.can_read_in_namespace(
-        view_namespace_obj
-    ):
+    if view_namespace_obj is None or not scopes.can_read_in_namespace(view_namespace_obj):
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail=(
