@@ -303,11 +303,13 @@ def render_graph(
                 "Failed to serve rendered graph via Google Cloud Storage. "
                 "Falling back to direct streaming."
             )
+    # "identity" makes GZipMiddleware pass the GeoPackage through uncompressed.
     return FileResponse(
         gpkg_path,
         media_type=GPKG_MEDIA_TYPE,
         headers={
             "ETag": etag.hex,
             "X-GerryDB-Graph-Render-ID": render_uuid.hex,
+            "Content-Encoding": "identity",
         },
     )

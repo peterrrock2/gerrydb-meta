@@ -3,12 +3,13 @@
 import gzip
 import json
 from http import HTTPStatus
-from io import BytesIO
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-from starlette.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from uvicorn.config import logger as log
 
 from gerrydb_meta.api import api_router
@@ -22,6 +23,40 @@ from gerrydb_meta.exceptions import (
 API_PREFIX = "/api/v1"
 
 app = FastAPI(title="gerrydb-meta", openapi_url=f"{API_PREFIX}/openapi.json")
+
+
+class CommitBeforeSendMiddleware:
+    """Commits the request's DB session before the response starts to send.
+
+    Guarantees a client can never observe a success response whose transaction
+    has not committed. FastAPI's yield-dependency teardown gives no such
+    ordering guarantee in this stack (verified empirically: back-to-back
+    bootstrap requests raced the commit once get_obj_meta's sleep was removed),
+    so the commit is tied to the ASGI http.response.start message instead.
+    Error responses (>= 400) skip the commit; get_db's close rolls them back.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start" and message["status"] < 400:
+                db = scope.get("state", {}).get("db")
+                if db is not None:
+                    await run_in_threadpool(db.commit)
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+
+# Innermost middleware (added first): commits fire when the router emits the
+# response, before GZip/logging layers or the client can see it.
+app.add_middleware(CommitBeforeSendMiddleware)
 
 
 @app.exception_handler(CreateValueError)
@@ -75,6 +110,35 @@ def bulk_create_error(request: Request, exc: BulkCreateError):
     )
 
 
+@app.exception_handler(RequestValidationError)
+async def request_validation_error(request: Request, exc: RequestValidationError):
+    """Rewrites regex-pattern validation failures into a friendlier 400.
+
+    All other validation errors get FastAPI's stock 422 response. Handling this
+    here (instead of sniffing 422 bodies in middleware) keeps response bodies
+    untouched on the hot path.
+    """
+    pattern_errors = [
+        err for err in exc.errors() if "String should match pattern" in str(err.get("msg", ""))
+    ]
+    if not pattern_errors:
+        return await request_validation_exception_handler(request, exc)
+
+    loc = pattern_errors[0].get("loc", ())
+    field = loc[1] if len(loc) > 1 else "unknown"
+    position_str = f"at position '{loc[2]}' " if len(loc) > 2 else ""
+    return JSONResponse(
+        status_code=HTTPStatus.BAD_REQUEST,
+        content={
+            "detail": (
+                f"Found unexpected expression in field '{field}' {position_str}of the request. "
+                "Please refer to the documentation for more information on the expected "
+                "string formats for each field you are trying to set."
+            ),
+        },
+    )
+
+
 # It's best to keep the compression level at 1 for GeoPackages. GZIP has trouble getting good
 # compression ratios on anything since the WKBs used to represent the geometries in the GeoPackage
 # look relatively random. The remaining columns in the SQLite database are not very large, and
@@ -84,94 +148,51 @@ app.add_middleware(GZipMiddleware, compresslevel=1)
 app.include_router(api_router, prefix=API_PREFIX)
 
 
+_LOGGED_ERROR_STATUSES = frozenset(
+    {
+        HTTPStatus.BAD_REQUEST,
+        HTTPStatus.FORBIDDEN,
+        HTTPStatus.CONFLICT,
+        HTTPStatus.UNPROCESSABLE_ENTITY,
+    }
+)
+
+
 @app.middleware("http")
-async def log_400_errors(request: Request, call_next):
+async def log_error_responses(request: Request, call_next):
+    """Logs error-response bodies. Success bodies stream through untouched."""
     response = await call_next(request)
+    if response.status_code not in _LOGGED_ERROR_STATUSES:
+        return response
 
-    body_bytes = b""
-
-    # Have to check the attribute because there is also a _StreamingResponse
-    # class in starlette.middleware.base that is the thing that we actually see sometimes
-    # and it is not the same as the starlette.responses.StreamingResponse class
+    # Error bodies are small; buffer for logging, then rebuild the response.
+    body = bytearray()
     if hasattr(response, "body_iterator"):
-        # If it’s a StreamingResponse, we need to consume .body_iterator
-        # to capture all the bytes, then recreate a new StreamingResponse so downstream still
-        # sees the original body.
         async for chunk in response.body_iterator:
-            body_bytes += chunk
-
-        # Keep a copy of the original compressed bytes
-        original_body = body_bytes
-
-        # If Content-Encoding: gzip, decompress before inspecting
-        if response.headers.get("Content-Encoding") == "gzip":  # pragma: no cover
-            try:
-                body_bytes = gzip.decompress(body_bytes)
-            except Exception:
-                pass
-
-        # Rebuild the StreamingResponse so the client still gets the same body:
-        response = StreamingResponse(
-            BytesIO(original_body),
+            body.extend(chunk)
+        response = Response(
+            content=bytes(body),
             status_code=response.status_code,
             headers=dict(response.headers),
         )
     else:  # pragma: no cover
-        if hasattr(response, "body"):
-            body_bytes = response.body
-            if response.headers.get("Content-Encoding") == "gzip":
-                try:
-                    body_bytes = gzip.decompress(body_bytes)
-                except Exception:
-                    pass
-        else:
-            body_bytes = b""
+        body.extend(getattr(response, "body", b""))
 
-    text = body_bytes.decode("utf-8", errors="replace")
-    json_body = None
-    if response.status_code in (400, 403, 409, 422):
+    text_bytes = bytes(body)
+    if response.headers.get("Content-Encoding") == "gzip":  # pragma: no cover
         try:
-            json_body = json.loads(text)
-            detail_msg = json_body.get("detail", "No detail available")
-        except Exception:  # pragma: no cover
-            detail_msg = text
+            text_bytes = gzip.decompress(text_bytes)
+        except Exception:
+            pass
+    text = text_bytes.decode("utf-8", errors="replace")
+    try:
+        detail_msg = json.loads(text).get("detail", "No detail available")
+    except Exception:
+        detail_msg = text
 
-        log.error(
-            f"{response.status_code} for Request: {request.method} {request.url}. "
-            f"Detail: {detail_msg}"
-        )
-
-    # If it was a 422 (Unprocessable Entity) and the decoded body contains "regex",
-    # print out a more user-friendly error message to tell the user what went wrong.
-    if (
-        response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-        and "String should match pattern" in text
-    ):
-        # This is the detail dictionary format that is normally returned by a regex
-        text_dict = {
-            "loc": ["unknown", "unknown"],
-            "msg": "Unknown error",
-            "type": "unknown",
-        }
-        if json_body is not None:
-            text_dict = json_body.get("detail", [text_dict])[0]
-
-        position_str = ""
-        if len(text_dict["loc"]) > 2:
-            position_str = f"at position '{text_dict['loc'][2]}' "
-        location_str = f"Found unexpected expression in field '{text_dict['loc'][1]}' {position_str}of the request. "
-        response = JSONResponse(
-            status_code=HTTPStatus.BAD_REQUEST,
-            content={
-                "detail": (
-                    location_str
-                    + "Please refer to the documentation for more information on the expected "
-                    "string formats for each field you are trying to set."
-                ),
-            },
-            headers=response.headers,
-        )
-
+    log.error(
+        f"{response.status_code} for Request: {request.method} {request.url}. Detail: {detail_msg}"
+    )
     return response
 
 

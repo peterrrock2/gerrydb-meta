@@ -313,11 +313,13 @@ def render_view(
                 "Falling back to direct streaming."
             )
     log.debug("Returning GPKG response")
+    # "identity" makes GZipMiddleware pass the GeoPackage through uncompressed.
     return FileResponse(
         gpkg_path,
         media_type=GPKG_MEDIA_TYPE,
         headers={
             "ETag": etag.hex,
             "X-GerryDB-View-Render-ID": render_uuid.hex,
+            "Content-Encoding": "identity",
         },
     )
