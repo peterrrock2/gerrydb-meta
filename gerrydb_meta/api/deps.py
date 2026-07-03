@@ -2,15 +2,14 @@
 
 import os
 import re
-import time
 from hashlib import sha512
 from http import HTTPStatus
 from typing import Generator
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
 
 from gerrydb_meta import crud, models
@@ -23,16 +22,39 @@ GERRYDB_SQL_ECHO = bool(os.environ.get("GERRYDB_SQL_ECHO", False))
 API_KEY_PATTERN = re.compile(r"[0-9a-z]{64}")
 
 
-def get_db() -> Generator:  # pragma: no cover
+_engine = None
+
+
+def _get_engine():  # pragma: no cover
+    """Lazily creates the per-process engine (one pool per gunicorn worker)."""
+    global _engine
+    if _engine is None:
+        _engine = create_engine(
+            db_url,
+            echo=GERRYDB_SQL_ECHO,
+            pool_size=5,
+            max_overflow=5,
+            pool_pre_ping=True,
+        )
+    return _engine
+
+
+def get_db(request: Request) -> Generator:  # pragma: no cover
+    """Yields a pooled per-request session.
+
+    The COMMIT is issued by CommitBeforeSendMiddleware when the response's
+    first bytes head out, NOT here: FastAPI runs this teardown after the
+    response can reach the client, so a fast caller could reference an object
+    (e.g. X-GerryDB-Meta-Id) before its transaction committed. The old
+    time.sleep(0.1) in get_obj_meta papered over exactly that race.
+    """
+    db = Session(_get_engine())
+    request.state.db = db
     try:
-        engine = create_engine(db_url, echo=GERRYDB_SQL_ECHO)
-        Session = sessionmaker(engine)
-        db = Session()
         yield db
-        db.commit()
     finally:
+        # Uncommitted work (error paths) is rolled back on pool return.
         db.close()
-        engine.dispose()
 
 
 def get_ogr2ogr_db_config() -> str:  # pragma: no cover
@@ -77,9 +99,6 @@ def get_obj_meta(
             status_code=HTTPStatus.BAD_REQUEST,
             detail="Object metadata ID is not a valid UUID hex string.",
         )
-    # NOTE: this sleep needs to be here otherwise you can try to query the db before
-    # it has committed the metadata object
-    time.sleep(0.1)
     log.debug("Retrieving ObjectMeta: %s", meta_uuid)  # Debugging line
     obj_meta = crud.obj_meta.get(db=db, id=meta_uuid)
     if obj_meta is None:
