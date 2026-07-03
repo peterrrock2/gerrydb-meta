@@ -1,3 +1,5 @@
+import hashlib
+
 import pytest
 from geoalchemy2 import WKBElement
 from shapely import Point, Polygon, wkb
@@ -407,3 +409,43 @@ def test_crud_geography_patch_bulk_errors_nonemtpy_to_empty(db_with_meta):
             geo_import=geo_import,
             namespace=ns,
         )
+
+
+def test_crud_geography_geometry_hash_canary(db_with_meta):
+    """Cross-stack WKB hash canary.
+
+    geo_bin dedup relies on md5(shapely WKB) matching the server's generated
+    column md5(ST_AsBinary(geography)) byte for byte. The constants below are
+    shared with the client suite's canary; if either assertion fails, a
+    shapely/GEOS/PostGIS upgrade changed WKB serialization and uploads would
+    stop deduplicating against previously stored geometries.
+    """
+    db, meta = db_with_meta
+    ns = make_atlantis_ns(db, meta)
+    geo_import, _ = crud.geo_import.create(db=db, obj_meta=meta, namespace=ns)
+
+    awkward = Polygon(
+        [(-71.1234567, 42.7654321), (-70.9876543, 42.7654329), (-70.9876543, 43.0123456)]
+    )
+    fixtures = {
+        "empty_canary": (Polygon(), "75b6f320f5eb33d79cbcd9cf62be5a83"),
+        "awkward_canary": (awkward, "f6b505d3b022c9826c36a5c1527d63b0"),
+    }
+
+    geos, _ = crud.geography.create_bulk(
+        db=db,
+        objs_in=[
+            schemas.GeographyCreate(path=path, geography=poly.wkb, internal_point=None)
+            for path, (poly, _) in fixtures.items()
+        ],
+        obj_meta=meta,
+        geo_import=geo_import,
+        namespace=ns,
+    )
+
+    for geo, version in geos:
+        poly, expected = fixtures[geo.path]
+        # Client-side hash (what upload dedup computes)...
+        assert hashlib.md5(poly.wkb).hexdigest() == expected
+        # ...must equal the server-side generated column for the stored bytes.
+        assert version.geo_bin.geometry_hash.hex() == expected

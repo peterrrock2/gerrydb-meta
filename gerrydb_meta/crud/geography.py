@@ -9,7 +9,8 @@ from typing import Collection
 
 from geoalchemy2.elements import WKBElement, WKTElement
 from shapely.geometry import Polygon
-from sqlalchemy import and_, func, insert, or_, select, update
+from sqlalchemy import and_, exc, insert, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
 
@@ -86,15 +87,15 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
     ):
         hash_keys = list(hash_dict.keys())
 
-        # The hashes have a unique constraint in the db, so this will be fine.
+        # Compare raw BYTEA so the unique index is usable; wrapping the column in
+        # encode() forced a full geo_bin scan that grew with table size.
         results = db.execute(
-            select(
-                models.GeoBin,
-                func.encode(models.GeoBin.geometry_hash, "hex").label("geom_hex"),
-            ).where(func.encode(models.GeoBin.geometry_hash, "hex").in_(hash_keys))
+            select(models.GeoBin.geo_bin_id, models.GeoBin.geometry_hash).where(
+                models.GeoBin.geometry_hash.in_([binascii.unhexlify(h) for h in hash_keys])
+            )
         ).all()
 
-        existing_hsh_to_bin_dict = {row.geom_hex: row.GeoBin.geo_bin_id for row in results}
+        existing_hsh_to_bin_dict = {row.geometry_hash.hex(): row.geo_bin_id for row in results}
 
         return (
             existing_hsh_to_bin_dict,
@@ -135,13 +136,16 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                     }
                 )
             result = db.execute(
-                insert(models.GeoBin).returning(
-                    models.GeoBin.geo_bin_id, models.GeoBin.geometry_hash
-                ),
+                pg_insert(models.GeoBin)
+                .on_conflict_do_nothing(index_elements=["geometry_hash"])
+                .returning(models.GeoBin.geo_bin_id, models.GeoBin.geometry_hash),
                 values_list,
             )
             bin_hash_list = [(bin_id, hsh.hex()) for bin_id, hsh in result.all()]
-        except Exception as ex:
+        # StatementError covers DBAPI errors and bind-processing failures
+        # (geoalchemy2 parses WKB during execution), without swallowing
+        # arbitrary Python bugs the way the old blanket except did.
+        except exc.StatementError as ex:
             log.exception(
                 "Geography insert failed, likely due to invalid geometries. Full error below: %s",
                 ex,
@@ -154,6 +158,18 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
         for bin_id, hsh in bin_hash_list:
             assert hsh not in existing_hsh_to_bin_dict, "Duplicate hash in db"
             existing_hsh_to_bin_dict[hsh] = bin_id
+
+        # ON CONFLICT DO NOTHING drops hashes a concurrent batch committed between
+        # our lookup and this insert; fetch the winners' bin ids.
+        lost_hashes = missing_hashes - set(existing_hsh_to_bin_dict.keys())
+        if lost_hashes:
+            rows = db.execute(
+                select(models.GeoBin.geo_bin_id, models.GeoBin.geometry_hash).where(
+                    models.GeoBin.geometry_hash.in_([binascii.unhexlify(h) for h in lost_hashes])
+                )
+            ).all()
+            for row in rows:
+                existing_hsh_to_bin_dict[row.geometry_hash.hex()] = row.geo_bin_id
 
         return existing_hsh_to_bin_dict
 
