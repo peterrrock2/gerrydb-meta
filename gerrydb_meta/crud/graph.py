@@ -11,6 +11,7 @@ from sqlalchemy import (
     Sequence,
     exc,
     insert,
+    literal_column,
     or_,
     select,
 )
@@ -270,7 +271,14 @@ class CRGraph(NamespacedCRBase[models.Graph, schemas.GraphCreate]):
         internal_point_query = (
             select(
                 geo_sub.c.path,
-                models.GeoBin.internal_point,
+                # Emit NULL for empty points: GPKG POINT layers and ogr2ogr
+                # reprojection both fail on POINT EMPTY. literal_column (not a
+                # typed CASE) so GeoAlchemy2 does not wrap it in ST_AsBinary.
+                literal_column(
+                    "(CASE WHEN ST_IsEmpty(gerrydb.geo_bin.internal_point::geometry) "
+                    "THEN NULL ELSE gerrydb.geo_bin.internal_point END)"
+                    "::geometry(Point, 4269)"  # explicit typmod so ogr2ogr keeps the SRS
+                ).label("internal_point"),
             )
             .select_from(models.GeoVersion)
             .join(members_sub, members_sub.c.geo_id == models.GeoVersion.geo_id)

@@ -612,7 +612,9 @@ def view_to_gpkg(context: ViewRenderContext, db_config: str) -> tuple[uuid.UUID,
     internal_point_layer_name = f"{geo_layer_name}__internal_points"
 
     if context.view.proj is not None:
-        proj_args = ["-t_srs", context.view.proj]
+        # Explicit -s_srs: storage is always EPSG:4269, and GDAL cannot infer the
+        # SRS of a SQL result layer whose first geometry is NULL.
+        proj_args = ["-s_srs", "epsg:4269", "-t_srs", context.view.proj]
     else:
         proj_args = []  # leave in original projection (conventionally EPSG:4269)
 
