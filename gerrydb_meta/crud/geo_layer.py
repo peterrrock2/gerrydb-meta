@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Tuple
 
-from sqlalchemy import exc, insert, update
+from sqlalchemy import exc, func, insert, text, update
 from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
 
@@ -70,6 +70,30 @@ class CRGeoLayer(NamespacedCRBase[models.GeoLayer, schemas.GeoLayerCreate]):
             .first()
         )
 
+    def __members_match(self, db: Session, set_version_id: int, new_geo_ids: set[int]) -> bool:
+        """SQL-side equality check between an existing set's members and `new_geo_ids`."""
+        old_count = (
+            db.query(func.count(models.GeoSetMember.geo_id))
+            .filter(models.GeoSetMember.set_version_id == set_version_id)
+            .scalar()
+        )
+        if old_count != len(new_geo_ids):
+            return False
+
+        # Counts match, so a one-way probe suffices: old minus new empty => equal.
+        # An array bind handles block scale (~1M ids, ~10 MB); move to a COPY
+        # temp table if sets grow an order of magnitude past that.
+        stray = db.execute(
+            text(
+                "SELECT geo_id FROM gerrydb.geo_set_member "
+                "WHERE set_version_id = :set_version_id "
+                "EXCEPT SELECT unnest(CAST(:geo_ids AS integer[])) "
+                "LIMIT 1"
+            ),
+            {"set_version_id": set_version_id, "geo_ids": list(new_geo_ids)},
+        ).first()
+        return stray is None
+
     def map_locality(
         self,
         db: Session,
@@ -90,20 +114,22 @@ class CRGeoLayer(NamespacedCRBase[models.GeoLayer, schemas.GeoLayerCreate]):
         new_geo_ids = set(geo.geo_id for geo in geographies)
 
         with db.begin(nested=True):
-            # First check to see if we need to create a new geo set
-            old_geo_ids = set(
-                [
-                    item[0]
-                    for item in db.query(models.GeoSetMember.geo_id)
-                    .join(
-                        models.GeoSetVersion,
-                        models.GeoSetMember.set_version_id == models.GeoSetVersion.set_version_id,
-                    )
-                    .all()
-                ]
+            # Compare against the current set for THIS (layer, locality) only; the
+            # old query joined every member of every set version in the database.
+            current_row = (
+                db.query(models.GeoSetVersion.set_version_id)
+                .filter(
+                    models.GeoSetVersion.layer_id == layer.layer_id,
+                    models.GeoSetVersion.loc_id == locality.loc_id,
+                    models.GeoSetVersion.valid_to.is_(None),
+                )
+                .order_by(models.GeoSetVersion.set_version_id.desc())
+                .first()
             )
 
-            if old_geo_ids == new_geo_ids:
+            if current_row is not None and self.__members_match(
+                db, current_row.set_version_id, new_geo_ids
+            ):
                 # No need to create a new set
                 log.debug(
                     f"Attempted to create a new geo set for layer {layer.full_path}"
