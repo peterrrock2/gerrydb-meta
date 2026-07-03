@@ -417,3 +417,87 @@ def test_crud_graph_get(db_with_meta):
     )
 
     assert created_graph.graph_id == retrieved_graph.graph_id
+
+
+def test_crud_graph_geo_valid_dates_as_of_creation(db_with_meta):
+    """Regression: _geo_valid_dates resolves versions as of graph creation.
+
+    The unfiltered query returned every version of every member geo, so a geo
+    patched after graph creation leaked its new valid_from into graph renders.
+    """
+    db, meta = db_with_meta
+    ns = make_atlantis_ns(db, meta)
+
+    geo_import, _ = crud.geo_import.create(db=db, obj_meta=meta, namespace=ns)
+    geo, _ = crud.geography.create_bulk(
+        db=db,
+        objs_in=[
+            schemas.GeographyCreate(path="central_atlantis", geography=None, internal_point=None),
+            schemas.GeographyCreate(path="western_atlantis", geography=None, internal_point=None),
+        ],
+        obj_meta=meta,
+        geo_import=geo_import,
+        namespace=ns,
+    )
+
+    geo_layer, _ = crud.geo_layer.create(
+        db=db,
+        obj_in=schemas.GeoLayerCreate(
+            path="atlantis_blocks",
+            description="The legendary city of Atlantis",
+            source_url="https://en.wikipedia.org/wiki/Atlantis",
+        ),
+        obj_meta=meta,
+        namespace=ns,
+    )
+    loc, _ = crud.locality.create_bulk(
+        db=db,
+        objs_in=[
+            schemas.LocalityCreate(
+                canonical_path="atlantis", parent_path=None, name="Atlantis", aliases=None
+            ),
+        ],
+        obj_meta=meta,
+    )
+    crud.geo_layer.map_locality(
+        db=db,
+        layer=geo_layer,
+        locality=loc[0],
+        geographies=[g[0] for g in geo],
+        obj_meta=meta,
+    )
+
+    created_graph, _ = crud.graph.create(
+        db=db,
+        obj_in=schemas.GraphCreate(
+            path="atlantis_dual",
+            description="The legendary city of Atlantis",
+            locality="atlantis",
+            layer="atlantis_blocks",
+            edges=[("central_atlantis", "western_atlantis", {})],
+        ),
+        geo_set_version=crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0]),
+        edge_geos={"central_atlantis": geo[0][0], "western_atlantis": geo[1][0]},
+        obj_meta=meta,
+        namespace=ns,
+    )
+
+    original_dates = crud.graph._geo_valid_dates(db, created_graph)
+    assert set(original_dates) == {"central_atlantis", "western_atlantis"}
+
+    # Patch one geo after graph creation: a newer version now exists, but the
+    # graph must keep resolving the version that was valid when it was created.
+    patch_import, _ = crud.geo_import.create(db=db, obj_meta=meta, namespace=ns)
+    square = Polygon([(-1, -1), (1, -1), (1, 1), (-1, 1)])
+    crud.geography.patch_bulk(
+        db=db,
+        objs_in=[
+            schemas.GeographyPatch(
+                path="central_atlantis", geography=square.wkb, internal_point=None
+            ),
+        ],
+        geo_import=patch_import,
+        namespace=ns,
+    )
+
+    assert crud.graph._geo_valid_dates(db, created_graph) == original_dates

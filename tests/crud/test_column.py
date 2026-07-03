@@ -339,6 +339,8 @@ def test_crud_column_update_col_of_each_type(db_with_meta):
         .join(models.ColumnRef, models.ColumnValue.col_id == models.ColumnRef.col_id)
         .filter(models.ColumnRef.path == col_path)
         .filter(models.ColumnValue.valid_to.is_(None))
+        # Heap order is not deterministic; pin the order the assertions assume.
+        .order_by(models.ColumnValue.geo_id)
         .all()
     )
     assert len(cols_list) == 2

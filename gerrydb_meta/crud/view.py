@@ -447,10 +447,10 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
 
         bad_cols = []
 
-        num_geos = len(
-            db.query(models.GeoSetMember.geo_id)
+        num_geos = (
+            db.query(func.count(models.GeoSetMember.geo_id))
             .filter(models.GeoSetMember.set_version_id == curr_ns_set_version_id)
-            .all()
+            .scalar()
         )
 
         for column in columns.values():

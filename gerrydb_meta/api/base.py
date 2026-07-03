@@ -35,7 +35,7 @@ def check_etag(db: Session, crud_obj: crud.CRBase, header: str) -> None:
     matches the ETag in `header`. Otherwise, does nothing.
     """
     etag = crud_obj.etag(db=db)
-    if etag is not None and header == '"{etag}"':
+    if etag is not None and header == f'"{etag}"':
         raise HTTPException(status_code=HTTPStatus.NOT_MODIFIED)
 
 
@@ -51,7 +51,7 @@ def check_namespaced_etag(
     matches the ETag in `header`. Otherwise, does nothing.
     """
     etag = crud_obj.etag(db=db, namespace=namespace)
-    if etag is not None and header == '"{etag}"':
+    if etag is not None and header == f'"{etag}"':
         raise HTTPException(status_code=HTTPStatus.NOT_MODIFIED)
 
 

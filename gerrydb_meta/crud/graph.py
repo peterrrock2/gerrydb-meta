@@ -3,7 +3,7 @@
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Tuple
 
@@ -94,6 +94,10 @@ class CRGraph(NamespacedCRBase[models.Graph, schemas.GraphCreate]):
                 description=obj_in.description,
                 meta_id=obj_meta.meta_id,
                 proj=obj_in.proj,
+                # Same clock as GeoVersion.valid_from (Python wall time). The
+                # server_default (PG now() = transaction start) sorts BEFORE
+                # same-transaction geo versions, which breaks as-of filtering.
+                created_at=datetime.now(timezone.utc),
             )
             db.add(graph)
 
@@ -222,7 +226,17 @@ class CRGraph(NamespacedCRBase[models.Graph, schemas.GraphCreate]):
                 models.Geography.geo_id == models.GeoSetMember.geo_id,
             )
             .join(models.GeoVersion, models.Geography.geo_id == models.GeoVersion.geo_id)
-            .where(models.GeoSetMember.set_version_id == graph.set_version_id)
+            .where(
+                models.GeoSetMember.set_version_id == graph.set_version_id,
+                # Match graph render's as-of semantics (valid at graph creation).
+                models.GeoVersion.valid_from <= graph.created_at,
+                or_(
+                    models.GeoVersion.valid_to.is_(None),
+                    models.GeoVersion.valid_to >= graph.created_at,
+                ),
+            )
+            # Ascending order + dict overwrite keeps the latest matching version per geo.
+            .order_by(models.GeoVersion.valid_from)
         )
 
         result = db.execute(query)

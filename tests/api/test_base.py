@@ -44,9 +44,11 @@ def dummy_namespace():
 def test_check_etag_no_exception():
     tag = uuid.uuid4()
     crud_obj = DummyCRUD(tag)
-    check_etag(db_dummy, crud_obj, f'"{tag}"')
+    # Stale or malformed client etags pass through; a matching one raises 304.
+    check_etag(db_dummy, crud_obj, '"{etag}"')
+    check_etag(db_dummy, crud_obj, f'"{uuid.uuid4()}"')
     with pytest.raises(HTTPException) as excinfo:
-        check_etag(db_dummy, crud_obj, '"{etag}"')
+        check_etag(db_dummy, crud_obj, f'"{tag}"')
     assert excinfo.value.status_code == HTTPStatus.NOT_MODIFIED
 
 
@@ -54,9 +56,10 @@ def test_check_namespaced_etag():
     tag = uuid.uuid4()
     crud_obj = DummyNamespacedCRUD(tag)
     namespace = object()
-    check_namespaced_etag(db_dummy, crud_obj, namespace, f'"{tag}"')
+    check_namespaced_etag(db_dummy, crud_obj, namespace, '"{etag}"')
+    check_namespaced_etag(db_dummy, crud_obj, namespace, f'"{uuid.uuid4()}"')
     with pytest.raises(HTTPException) as excinfo:
-        check_namespaced_etag(db_dummy, crud_obj, namespace, '"{etag}"')
+        check_namespaced_etag(db_dummy, crud_obj, namespace, f'"{tag}"')
     assert excinfo.value.status_code == HTTPStatus.NOT_MODIFIED
 
 

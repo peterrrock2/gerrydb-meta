@@ -321,10 +321,8 @@ class GeoBin(Base):
     )
 
     __table_args__ = (
-        # Enforce uniqueness on the generated column. This creates a unique index.
-        UniqueConstraint("geometry_hash", name="uq_geo_bin_geometry_hash"),
-        # Create a B-tree index on the binary representation of geography:
-        # this allows for fast equality checks so we don't duplicate binaries.
+        # Enforce uniqueness on the generated column. The unique index this creates
+        # also serves hash-equality lookups, so no separate B-tree index is needed.
         # As a note, the probability of a collision in this extremely low; the
         # md5 hash produces a 128-bit output, so, using the standard approximation
         # for the probability of a collision under the birthday paradox we get that
@@ -334,7 +332,7 @@ class GeoBin(Base):
         # less than that, the probability of a collision is negligible. Hashing on
         # the WKB representation of the geometry is also good since WKBs are practically
         # random bytes from the perspective of the MD5 hash function.
-        Index("ix_geo_bin_geometry_hash", "geometry_hash"),
+        UniqueConstraint("geometry_hash", name="uq_geo_bin_geometry_hash"),
     )
 
 
@@ -376,7 +374,10 @@ class Geography(Base):
     versions: Mapped[list[GeoVersion]] = relationship("GeoVersion")
 
     # Just a safety check to make sure that paths are unique within a namespace
-    __table_args__ = (UniqueConstraint("path", "namespace_id", name="uq_geography_path_namespace"),)
+    __table_args__ = (
+        UniqueConstraint("path", "namespace_id", name="uq_geography_path_namespace"),
+        Index("ix_geography_namespace_id", "namespace_id"),
+    )
 
     @property
     def full_path(self):  # pragma: no cover
@@ -546,8 +547,8 @@ class ColumnSetMember(Base):
 
 class ColumnValue(Base):
     __tablename__ = "column_value"
+    # The PK already covers (col_id, geo_id, valid_from); no separate unique index.
     __table_args__ = (
-        UniqueConstraint("col_id", "geo_id", "valid_from"),
         Index("ix_column_value_geo_id_valid_from", "geo_id", "valid_from"),
         Index("ix_column_value_geo_id_valid_to", "geo_id", "valid_to"),
         {"postgresql_partition_by": "LIST (col_id)"},
@@ -874,7 +875,11 @@ class ViewRender(Base):
 
 class ETag(Base):
     __tablename__ = "etag"
-    __table_args__ = (UniqueConstraint("namespace_id", "table"),)
+    __table_args__ = (
+        # NULLS NOT DISTINCT (PG15+) so the global-collection row (namespace_id
+        # IS NULL) upserts instead of accumulating duplicates.
+        UniqueConstraint("namespace_id", "table", postgresql_nulls_not_distinct=True),
+    )
 
     etag_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     namespace_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("namespace.namespace_id"))
