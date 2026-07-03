@@ -2,7 +2,9 @@ version: "3.9"
 services:
   db:
     platform: linux/amd64
-    image: postgis/postgis
+    # Pinned to the live cluster's major: an unpinned pull that bumps the major
+    # will refuse to start on the persistent volume (see plan P1.1).
+    image: postgis/postgis:17-3.5
     ports:
       - "54320:5432"
     environment:
@@ -20,7 +22,7 @@ services:
 
   test-db:
     platform: linux/amd64
-    image: postgis/postgis
+    image: postgis/postgis:17-3.5
     # Test suites drop/recreate the whole schema constantly; the default lock
     # table is marginal for DROP SCHEMA ... CASCADE under concurrent load.
     command: postgres -c max_locks_per_transaction=256
