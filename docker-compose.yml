@@ -21,6 +21,9 @@ services:
   test-db:
     platform: linux/amd64
     image: postgis/postgis
+    # Test suites drop/recreate the whole schema constantly; the default lock
+    # table is marginal for DROP SCHEMA ... CASCADE under concurrent load.
+    command: postgres -c max_locks_per_transaction=256
     ports:
       - "54321:5432"
     environment:

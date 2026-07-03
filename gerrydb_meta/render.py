@@ -489,7 +489,6 @@ def __insert_geopackage_geometries(
         *_ogr2ogr_sql_args(context.internal_point_query),
         "-nln",
         internal_point_layer_name,
-        "-skipfailures",  # Empty points are read as a failure
         "-nlt",
         "POINT",
     ]
@@ -693,7 +692,8 @@ def graph_to_gpkg(context: GraphRenderContext, db_config: str) -> tuple[uuid.UUI
     internal_point_layer_name = f"{context.graph.path}__internal_points"
 
     if context.graph.proj is not None:
-        proj_args = ["-t_srs", context.graph.proj]
+        # -s_srs for the same NULL-first-geometry reason as in view_to_gpkg above.
+        proj_args = ["-s_srs", "epsg:4269", "-t_srs", context.graph.proj]
     else:
         proj_args = []  # leave in original projection (conventionally EPSG:4269)
 

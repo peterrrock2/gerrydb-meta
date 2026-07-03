@@ -40,7 +40,7 @@ GRAPH_BATCH_SIZE = 100000
 
 
 def _view_columns(db: Session, template_version_id: int) -> dict[str, models.DataColumn]:
-    """Gets the unique columns associated with a `ViewTemplateVersion` by alias."""
+    """Gets the unique columns associated with a `ViewTemplateVersion` by canonical path."""
     column_ref_ids = select(models.ViewTemplateColumnMember.ref_id).filter(
         models.ViewTemplateColumnMember.template_version_id == template_version_id
     )
@@ -65,19 +65,21 @@ def _view_columns(db: Session, template_version_id: int) -> dict[str, models.Dat
     ).all()
     column_ids = [row.col_id for row in column_ids_with_paths]
 
-    # Determine the shortest unambiguous alias for each plan.
-    namespaces_by_path = defaultdict(set)
-    for row in column_ids_with_paths:
-        namespaces_by_path[row.path].add(row.namespace)
-    col_id_to_alias = {}
-    for row in column_ids_with_paths:
-        alias = (
-            f"{row.namespace}__{row.path}" if len(namespaces_by_path[row.path]) > 1 else row.path
-        )
-        col_id_to_alias[row.col_id] = alias
-
     raw_columns = db.query(models.DataColumn).filter(models.DataColumn.col_id.in_(column_ids)).all()
-    return {col_id_to_alias[col.col_id]: col for col in raw_columns}
+
+    # Label columns by canonical path, not the alias the template referenced:
+    # rendered column names must not depend on which alias was used.
+    namespaces_by_path = defaultdict(set)
+    for col in raw_columns:
+        namespaces_by_path[col.canonical_ref.path].add(col.namespace.path)
+    return {
+        (
+            f"{col.namespace.path}__{col.canonical_ref.path}"
+            if len(namespaces_by_path[col.canonical_ref.path]) > 1
+            else col.canonical_ref.path
+        ): col
+        for col in raw_columns
+    }
 
 
 @dataclass(frozen=True)
@@ -829,9 +831,13 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
             column_aliases.append(alias)
 
+        # Grouped by geography *path*, not geo_id: cross-namespace views hold one
+        # geo_id per namespace for the same path, and their values must merge into
+        # a single output row.
         col_table_sub = (
-            select(models.ColumnValue.geo_id, *col_agg_selects)
+            select(models.Geography.path, *col_agg_selects)
             .select_from(models.ColumnValue)
+            .join(models.Geography, models.Geography.geo_id == models.ColumnValue.geo_id)
             .where(models.ColumnValue.col_id.in_(col_ids))
             .where(models.ColumnValue.geo_id.in_(select(geo_id_query.c.geo_id)))
             .where(
@@ -841,7 +847,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                     models.ColumnValue.valid_to >= view.at,
                 ),
             )
-            .group_by(models.ColumnValue.geo_id)
+            .group_by(models.Geography.path)
             .subquery("col_table_sub")
         )
 
@@ -873,6 +879,15 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 models.Geography.path,
                 models.GeoBin.geography,
                 models.GeoBin.internal_point,
+                # One geometry row per path: cross-namespace views carry the same
+                # path once per namespace (bin-deduped, so byte-identical); pick
+                # deterministically by lowest geo_id.
+                func.row_number()
+                .over(
+                    partition_by=models.Geography.path,
+                    order_by=models.Geography.geo_id,
+                )
+                .label("path_row_num"),
             )
             .select_from(models.Geography)
             .join(
@@ -894,10 +909,13 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 *[col_table_sub.c[alias] for alias in column_aliases],
             )
             .select_from(geo_sub)
-            .join(col_table_sub, geo_sub.c.geo_id == col_table_sub.c.geo_id)
+            .join(col_table_sub, geo_sub.c.path == col_table_sub.c.path)
+            .where(geo_sub.c.path_row_num == 1)
         )
 
-        internal_point_query = select(geo_sub.c.path, geo_sub.c.internal_point)
+        internal_point_query = select(geo_sub.c.path, geo_sub.c.internal_point).where(
+            geo_sub.c.path_row_num == 1
+        )
 
         plans, plan_labels, plan_assignments = self._plans(
             db, view, view_set_version_ids=view_set_version_ids

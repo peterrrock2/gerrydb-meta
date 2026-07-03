@@ -195,7 +195,7 @@ def test_fork_validate__all_errors(caplog):
     assert excinfo.value.status_code == 409
     assert (
         f"Cannot fork data from layer '{source_layer}' in '{source_namespace}' "
-        f"to layer '{target_layer}' in '{target_namespace}' because some "
+        f"to layer '{target_layer}' in '{target_namespace}' because "
         f"no geometries are present in the target namespace/layer and the parameter "
         f"`allow_extra_source_geos` was not passed as `True`."
     ) in str(excinfo.value.detail)
@@ -366,7 +366,7 @@ def test_full_fork(ctx_no_scopes, caplog, me_2010_gdf):
     assert excinfo.value.status_code == 409
     assert (
         "Cannot fork data from layer 'counties_fork_full' in 'test_fork_full' to layer "
-        "'counties_fork_full' in 'test_fork_full_2' because some geometries are present "
+        "'counties_fork_full' in 'test_fork_full_2' because no geometries are present "
         "in the target namespace/layer and the parameter `allow_extra_source_geos` was not "
         "passed as `True`."
     ) in str(excinfo.value.detail)

@@ -229,7 +229,7 @@ class Column(ColumnBase):
 class ColumnValue(BaseModel):
     """Value of a column for a geography."""
 
-    path: GeoNameStr
+    path: NamespacedGerryGeoPath
     value: Any
 
 
