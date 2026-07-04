@@ -261,6 +261,10 @@ class DummyNamespacedGerryGeoPath(BaseModel):
         "foo1/bar2/123",  # last segment may start digit
         "a1/b2/c3",  # all‐lowercase segments—still okay
         "x" * 248 + "/y2/ZZZ",  # 255 total
+        "vtd:0109700VP25",  # bare geoid path with uppercase (AL VTDs)
+        "vtd:010130012.2",  # bare geoid path with dot
+        "vtd:010450007-1",  # bare geoid path with hyphen
+        "/census.2020/vtd:0109700VP25",  # namespaced uppercase geoid
     ],
 )
 def test_namespaced_gerrygeopath_valid(value):
