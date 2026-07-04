@@ -1,4 +1,14 @@
 import hashlib
+
+import shapely
+
+from gerrydb_meta.crud.geography import GEO_GRID_SIZE
+
+
+def canonical_md5(geom):
+    """Hash of the stored (grid-snapped) WKB bytes."""
+    snapped = geom if geom.is_empty else shapely.set_precision(geom, GEO_GRID_SIZE, mode="pointwise")
+    return hashlib.md5(snapped.wkb).hexdigest()
 import logging
 from datetime import datetime, timezone
 
@@ -126,7 +136,7 @@ def test_full_list(ctx_no_scopes, caplog, me_2010_gdf):
 
     assert set(path_hash_dict.keys()) == set(me_2010_gdf.index)
     assert set(path_hash_dict.values()) == {
-        hashlib.md5(row.geometry.wkb).hexdigest() for row in new_me_2010_gdf.itertuples()
+        canonical_md5(row.geometry) for row in new_me_2010_gdf.itertuples()
     }
 
     new_me_2010_gdf["geometry"] = [Polygon() for _ in range(len(new_me_2010_gdf))]
@@ -160,7 +170,7 @@ def test_full_list(ctx_no_scopes, caplog, me_2010_gdf):
 
     assert set(path_hash_dict.keys()) == set(me_2010_gdf.index)
     assert set(path_hash_dict.values()) == {
-        hashlib.md5(row.geometry.wkb).hexdigest() for row in new_me_2010_gdf.itertuples()
+        canonical_md5(row.geometry) for row in new_me_2010_gdf.itertuples()
     }
 
     # Check that being valid at a specific time returns the correct hashes
@@ -177,5 +187,5 @@ def test_full_list(ctx_no_scopes, caplog, me_2010_gdf):
 
     assert set(path_hash_dict.keys()) == set(me_2010_gdf.index)
     assert set(path_hash_dict.values()) == {
-        hashlib.md5(row.geometry.wkb).hexdigest() for row in me_2010_gdf.itertuples()
+        canonical_md5(row.geometry) for row in me_2010_gdf.itertuples()
     }

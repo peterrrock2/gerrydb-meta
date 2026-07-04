@@ -9,8 +9,16 @@ from types import SimpleNamespace
 import geopandas as gpd
 import pandas as pd
 import pytest
+import shapely
 from fastapi import HTTPException
 from shapely.geometry import Point
+
+from gerrydb_meta.crud.geography import GEO_GRID_SIZE
+
+
+def _canonical_geoseries(series):
+    """What the server stores: coordinates snapped to the canonical grid."""
+    return series.apply(lambda g: shapely.set_precision(g, GEO_GRID_SIZE, mode="pointwise"))
 
 import gerrydb_meta.api.view as view_api
 import gerrydb_meta.models as models
@@ -407,7 +415,7 @@ def test_good_render_view(db, me_2010_gdf, me_2010_nx_graph, me_2010_plan_dict, 
     me_2010_gdf.sort_index(inplace=True)
 
     assert gdf["aland"].equals(me_2010_gdf["ALAND10"])
-    assert gdf["geometry"].equals(me_2010_gdf["geometry"])
+    assert gdf["geometry"].equals(_canonical_geoseries(me_2010_gdf["geometry"]))
 
     gdf = gpd.read_file(path, layer="me_test_view__internal_points")
 
@@ -610,7 +618,7 @@ def test_good_render_view_default_projection(
     me_2010_gdf = me_2010_gdf.to_crs(gdf.crs)
 
     assert gdf["aland"].equals(me_2010_gdf["ALAND10"])
-    assert gdf["geometry"].equals(me_2010_gdf["geometry"])
+    assert gdf["geometry"].equals(_canonical_geoseries(me_2010_gdf["geometry"]))
 
     gdf = gpd.read_file(path, layer="me_test_view__internal_points")
 
@@ -748,7 +756,7 @@ def test_good_render_graph(db, me_2010_gdf, me_2010_nx_graph, ia_dataframe, capl
     gdf.sort_index(inplace=True)
     me_2010_gdf.sort_index(inplace=True)
 
-    assert gdf["geometry"].equals(me_2010_gdf["geometry"])
+    assert gdf["geometry"].equals(_canonical_geoseries(me_2010_gdf["geometry"]))
 
     gdf = gpd.read_file(path, layer="me_2010_county_dual__internal_points")
 
@@ -907,7 +915,7 @@ def test_good_render_graph_extra_geos(db, me_2010_gdf, me_2010_nx_graph, ia_data
     gdf.sort_index(inplace=True)
     me_2010_gdf.sort_index(inplace=True)
 
-    assert gdf["geometry"].equals(me_2010_gdf["geometry"])
+    assert gdf["geometry"].equals(_canonical_geoseries(me_2010_gdf["geometry"]))
 
     gdf = gpd.read_file(path, layer="me_2010_county_dual__internal_points")
 
@@ -1270,7 +1278,7 @@ def test_view_render_api(db, me_2010_gdf, me_2010_nx_graph, me_2010_plan_dict, c
     assert gdf["aland"].equals(me_2010_gdf["ALAND10"])
     # for g1, g2 in zip(gdf.geometry, me_2010_gdf.geometry):
     #     assert g1.equals_exact(g2, tolerance=8)
-    assert gdf["geometry"].equals(me_2010_gdf["geometry"])
+    assert gdf["geometry"].equals(_canonical_geoseries(me_2010_gdf["geometry"]))
 
     gdf = gpd.read_file(path, layer="me_test_api_view__internal_points")
 

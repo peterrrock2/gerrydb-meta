@@ -404,4 +404,6 @@ def fork_geos_between_namespaces(
         obj_meta=meta_obj,
     )
 
-    return geo_ret
+    # ORM objects don't JSON-encode (raw WKBElement columns); the client only
+    # checks the status code, so return the forked paths.
+    return [geo.path for geo, _version in geo_ret[0]]

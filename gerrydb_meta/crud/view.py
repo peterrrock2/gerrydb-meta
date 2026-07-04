@@ -855,6 +855,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             select(
                 models.GeoVersion.geo_id,
                 models.GeoVersion.geo_bin_id,
+                models.GeoVersion.internal_point,
                 func.row_number()
                 .over(
                     partition_by=models.GeoVersion.geo_id,
@@ -878,7 +879,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 models.Geography.geo_id,
                 models.Geography.path,
                 models.GeoBin.geography,
-                models.GeoBin.internal_point,
+                current_geo_version_sub.c.internal_point,
                 # One geometry row per path: cross-namespace views carry the same
                 # path once per namespace (bin-deduped, so byte-identical); pick
                 # deterministically by lowest geo_id.

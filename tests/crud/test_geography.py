@@ -1,11 +1,13 @@
 import hashlib
 
 import pytest
+import shapely
 from geoalchemy2 import WKBElement
 from shapely import Point, Polygon, wkb
 from shapely.geometry import box
 
 from gerrydb_meta import crud, schemas
+from gerrydb_meta.crud.geography import GEO_GRID_SIZE
 from gerrydb_meta.exceptions import *
 
 square_corners = [(-1, -1), (1, -1), (1, 1), (-1, 1)]
@@ -412,13 +414,19 @@ def test_crud_geography_patch_bulk_errors_nonemtpy_to_empty(db_with_meta):
 
 
 def test_crud_geography_geometry_hash_canary(db_with_meta):
-    """Cross-stack WKB hash canary.
+    """Cross-stack canonical-WKB hash canary.
 
-    geo_bin dedup relies on md5(shapely WKB) matching the server's generated
-    column md5(ST_AsBinary(geography)) byte for byte. The constants below are
-    shared with the client suite's canary; if either assertion fails, a
-    shapely/GEOS/PostGIS upgrade changed WKB serialization and uploads would
-    stop deduplicating against previously stored geometries.
+    geo_bin dedup relies on md5(shapely WKB of the grid-snapped geometry)
+    matching the server's generated column md5(ST_AsBinary(geography)) byte
+    for byte, with both sides snapping to the same 1e-6 degree grid before
+    hashing. The constants below are shared with the client suite's canary; if
+    either assertion fails, a shapely/GEOS/PostGIS upgrade changed WKB
+    serialization or precision reduction, and uploads would stop deduplicating
+    against previously stored geometries.
+
+    The awkward fixture has 7-decimal coordinates, so its canonical hash
+    differs from its raw hash: it also pins that the server snaps before
+    hashing and storage.
     """
     db, meta = db_with_meta
     ns = make_atlantis_ns(db, meta)
@@ -429,7 +437,7 @@ def test_crud_geography_geometry_hash_canary(db_with_meta):
     )
     fixtures = {
         "empty_canary": (Polygon(), "75b6f320f5eb33d79cbcd9cf62be5a83"),
-        "awkward_canary": (awkward, "f6b505d3b022c9826c36a5c1527d63b0"),
+        "awkward_canary": (awkward, "f05ebab893ed6babfebd1bbbe1693be9"),
     }
 
     geos, _ = crud.geography.create_bulk(
@@ -445,7 +453,45 @@ def test_crud_geography_geometry_hash_canary(db_with_meta):
 
     for geo, version in geos:
         poly, expected = fixtures[geo.path]
-        # Client-side hash (what upload dedup computes)...
-        assert hashlib.md5(poly.wkb).hexdigest() == expected
+        canonical = poly if poly.is_empty else shapely.set_precision(poly, GEO_GRID_SIZE, mode="pointwise")
+        # Client-side hash of the canonical bytes (what upload dedup computes)...
+        assert hashlib.md5(canonical.wkb).hexdigest() == expected
         # ...must equal the server-side generated column for the stored bytes.
         assert version.geo_bin.geometry_hash.hex() == expected
+
+    # The raw 7-decimal bytes must NOT be what got stored.
+    assert (
+        hashlib.md5(fixtures["awkward_canary"][0].wkb).hexdigest()
+        != fixtures["awkward_canary"][1]
+    )
+
+
+def test_crud_geography_empty_polygons_keep_distinct_internal_points(db_with_meta):
+    """Hash-identical geometries share a bin, but each geography keeps its own
+    internal point (points used to live on the shared bin, so all empty
+    polygons aliased to the first upload's point)."""
+    db, meta = db_with_meta
+    ns = make_atlantis_ns(db, meta)
+    geo_import, _ = crud.geo_import.create(db=db, obj_meta=meta, namespace=ns)
+
+    geos, _ = crud.geography.create_bulk(
+        db=db,
+        objs_in=[
+            schemas.GeographyCreate(
+                path="empty_a", geography=None, internal_point=Point(1.0, 1.0).wkb
+            ),
+            schemas.GeographyCreate(
+                path="empty_b", geography=None, internal_point=Point(2.0, 2.0).wkb
+            ),
+        ],
+        obj_meta=meta,
+        geo_import=geo_import,
+        namespace=ns,
+    )
+
+    versions = {geo.path: version for geo, version in geos}
+    assert versions["empty_a"].geo_bin_id == versions["empty_b"].geo_bin_id
+    point_a = wkb.loads(bytes(versions["empty_a"].internal_point.data))
+    point_b = wkb.loads(bytes(versions["empty_b"].internal_point.data))
+    assert point_a == Point(1.0, 1.0)
+    assert point_b == Point(2.0, 2.0)

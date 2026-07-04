@@ -313,10 +313,6 @@ class GeoBin(Base):
     # We remove the spatial index from the geography column for now because we
     # are not checking interstections or anything like that with it for now.
     geography = mapped_column(SqlGeography(srid=4269, spatial_index=False), nullable=True)
-    internal_point = mapped_column(
-        SqlGeography(geometry_type="POINT", srid=4269, spatial_index=False),
-        nullable=True,
-    )
 
     # Add a generated column that stores a 128-bit binary hash of the geography.
     # md5() returns a hex string, so we use decode(..., 'hex') to convert to BYTEA.
@@ -356,13 +352,19 @@ class GeoVersion(Base):
     valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     valid_to: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     geo_bin_id = mapped_column(Integer, ForeignKey("geo_bin.geo_bin_id"), nullable=True)
+    # Internal points are per-geography attributes, not part of the deduped
+    # geometry bytes: hash-identical geometries (e.g. shared empty polygons)
+    # must not alias to one point, so the point lives on the version, not the bin.
+    internal_point = mapped_column(
+        SqlGeography(geometry_type="POINT", srid=4269, spatial_index=False),
+        nullable=True,
+    )
 
     # Create a relationship to GeoBits
     geo_bin = relationship("GeoBin", backref="geo_versions", lazy="joined")
 
-    # Now use association_proxy to expose the geography and internal_point attributes directly
+    # Now use association_proxy to expose the geography attribute directly
     geography = association_proxy("geo_bin", "geography")
-    internal_point = association_proxy("geo_bin", "internal_point")
 
 
 class Geography(Base):

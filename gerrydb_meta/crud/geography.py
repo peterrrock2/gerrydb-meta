@@ -7,6 +7,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Collection
 
+import numpy as np
+import shapely
 from geoalchemy2.elements import WKBElement, WKTElement
 from shapely.geometry import Polygon
 from sqlalchemy import and_, exc, insert, or_, select, update
@@ -17,6 +19,75 @@ from uvicorn.config import logger as log
 from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.exceptions import BulkCreateError, BulkPatchError
+
+# Canonical coordinate grid, in degrees (~0.11 m; accuracy requirement is
+# ~1/3 m). Geometries are snapped to this grid before hashing AND storage, so
+# pull -> reproject -> upload round trips re-snap to identical bytes and dedup
+# against stored bins. The client applies the same snap before serializing.
+# PERMANENT: changing the grid invalidates every stored geometry hash.
+GEO_GRID_SIZE = 1e-6
+
+
+def _canonicalize_geos(objs_in):
+    """Snaps every geography in `objs_in` to the canonical grid.
+
+    Returns (new objs, max per-axis snap displacement in degrees). Snapping
+    must happen before the dedup hash: snapping only inside the insert would
+    store snapped bytes while the lookup hashed raw ones, so off-grid uploads
+    would miss dedup forever.
+
+    Census-published coordinates are integer microdegrees (TIGER/Line
+    technical documentation sec. 3.3.6), so the expected displacement for
+    census sources is ~0; up to half-grid is normal for derived products
+    (clips, dissolves). A large systematic displacement flags a
+    finer-than-grid source that deserves a deliberate precision decision
+    instead of a silent truncation, which is why the maximum is logged
+    per batch.
+    """
+    with_geo = [i for i, obj in enumerate(objs_in) if obj.geography is not None]
+    if not with_geo:
+        return list(objs_in), 0.0
+
+    try:
+        geoms = shapely.from_wkb([objs_in[i].geography for i in with_geo])
+    except shapely.errors.ShapelyError as ex:
+        log.exception("Failed to parse geometries for canonicalization.")
+        raise BulkCreateError(
+            "Failed to insert geometries. This is likely due to invalid Geometries; please"
+            " ensure geometries can be encoded in WKB format."
+        ) from ex
+    coords = shapely.get_coordinates(geoms)
+    max_disp = 0.0
+    if coords.size:
+        scaled = coords / GEO_GRID_SIZE
+        max_disp = float(np.abs(scaled - np.round(scaled)).max()) * GEO_GRID_SIZE
+    # Pointwise: on-grid (census-published) coordinates round-trip
+    # byte-identically and vertex order is preserved; the default valid_output
+    # mode rebuilds rings, breaking that identity. Empty geometries pass
+    # through unchanged (pointwise reduction rewrites their bytes).
+    empties = shapely.is_empty(geoms)
+    canonical = shapely.to_wkb(shapely.set_precision(geoms, GEO_GRID_SIZE, mode="pointwise"))
+
+    out = list(objs_in)
+    for pos, i in enumerate(with_geo):
+        if empties[pos]:
+            continue
+        out[i] = objs_in[i].model_copy(update={"geography": bytes(canonical[pos])})
+    return out, max_disp
+
+
+def _internal_point_elements(objs_in) -> dict[str, WKBElement | WKTElement]:
+    """Maps each object's path to its internal point element (POINT EMPTY when
+    none was provided)."""
+    empty_point = WKTElement("POINT EMPTY", srid=4269)
+    return {
+        obj.path: (
+            empty_point
+            if obj.internal_point is None
+            else WKBElement(obj.internal_point, srid=4269)
+        )
+        for obj in objs_in
+    }
 
 
 class CRGeography(NamespacedCRBase[models.Geography, None]):
@@ -111,7 +182,6 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
         missing_hashes: set[str],
     ) -> dict[str, int]:
         empty_polygon_wkb = WKBElement(Polygon().wkb, srid=4269)
-        empty_point_wkb = WKTElement("POINT EMPTY", srid=4269)
 
         try:
             values_list = []
@@ -127,11 +197,6 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                             empty_polygon_wkb
                             if obj_in.geography is None
                             else WKBElement(obj_in.geography, srid=4269)
-                        ),
-                        "internal_point": (
-                            empty_point_wkb
-                            if obj_in.internal_point is None
-                            else WKBElement(obj_in.internal_point, srid=4269)
                         ),
                     }
                 )
@@ -222,6 +287,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
         hash_bin_dict: dict[str, models.GeoBin],
         path_geos_dict: dict[str, models.Geography],
         path_hash_dict: dict[str, str],
+        path_point_dict: dict,
         geo_import: models.GeoImport,
         valid_from: datetime,
     ):
@@ -237,6 +303,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                                 "geo_id": geo.geo_id,
                                 "valid_from": valid_from,
                                 "geo_bin_id": hash_bin_dict[path_hash_dict[path]],
+                                "internal_point": path_point_dict.get(path),
                             }
                             for path, geo in path_geos_dict.items()
                         ],
@@ -309,6 +376,14 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
             db=db, obj_paths=[obj.path for obj in objs_in], namespace=namespace
         )
 
+        objs_in, max_disp = _canonicalize_geos(objs_in)
+        log.info(
+            "Geo import %s: max snap displacement %.3e degrees over %d geographies.",
+            geo_import.uuid,
+            max_disp,
+            len(objs_in),
+        )
+
         valid_from = datetime.now(timezone.utc)
 
         with db.begin(nested=True):
@@ -328,6 +403,7 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                 hash_bin_dict=hash_bin_dict,
                 path_geos_dict=path_geos_dict,
                 path_hash_dict=path_hash_dict,
+                path_point_dict=_internal_point_elements(objs_in),
                 geo_import=geo_import,
                 valid_from=valid_from,
             )
@@ -455,6 +531,12 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
         existing_geos = self.__validate_patch_geos(
             db=db, obj_paths=[obj.path for obj in objs_in], namespace=namespace
         )
+        objs_in, max_disp = _canonicalize_geos(objs_in)
+        log.info(
+            "Geo patch: max snap displacement %.3e degrees over %d geographies.",
+            max_disp,
+            len(objs_in),
+        )
         path_hash_dict = self.__get_path_hashes_to_patch(
             db=db,
             objs_in=objs_in,
@@ -499,6 +581,9 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                             hash_bin_dict=hash_bin_dict,
                             path_geos_dict=path_geos_dict,
                             path_hash_dict=path_hash_dict,
+                            path_point_dict=_internal_point_elements(
+                                [obj for obj in objs_in if obj.path in path_hash_dict]
+                            ),
                             geo_import=geo_import,
                             valid_from=valid_time,
                         )
@@ -601,11 +686,28 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                 )
             }
 
+            # Forked namespaces share bins, but internal points are
+            # per-version: copy the source's current points onto the forks.
+            source_points = dict(
+                db.query(models.Geography.path, models.GeoVersion.internal_point)
+                .join(
+                    models.GeoVersion,
+                    models.GeoVersion.geo_id == models.Geography.geo_id,
+                )
+                .filter(
+                    models.Geography.namespace_id == source_namespace.namespace_id,
+                    models.GeoVersion.valid_to.is_(None),
+                    models.Geography.path.in_(list(path_hash_dict.keys())),
+                )
+                .all()
+            )
+
             geo_id_to_version_dict = self.__insert_geo_versions(
                 db=db,
                 hash_bin_dict=hash_bin_dict,
                 path_geos_dict=path_geos_dict,
                 path_hash_dict=path_hash_dict,
+                path_point_dict=source_points,
                 geo_import=geo_import,
                 valid_from=valid_from,
             )
