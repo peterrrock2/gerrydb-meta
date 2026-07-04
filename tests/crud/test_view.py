@@ -1448,3 +1448,129 @@ def test_view_create_historical_valid_at_uses_scan(db_with_meta, monkeypatch):
             locality=loc[0],
             layer=geo_layer,
         )
+
+
+def test_view_create_historical_valid_at_uses_scan_default_slack(db_with_meta):
+    """The shipping freshness gate (no monkeypatch) sends historical anchors
+    to the as-of scan.
+
+    Fixtures are backdated in SQL so a 30-minute-old anchor is genuinely
+    historical under the default slack; the values appeared only 10 minutes
+    ago, so validation must fail via the scan even though CURRENT coverage
+    (what the stats table sees) is complete.
+    """
+    from sqlalchemy import text as sql_text
+
+    db, meta = db_with_meta
+    ns = make_atlantis_ns(db, meta)
+    geo_import, _ = crud.geo_import.create(db=db, obj_meta=meta, namespace=ns)
+    geo, _ = crud.geography.create_bulk(
+        db=db,
+        objs_in=[
+            schemas.GeographyCreate(path="hist2_a", geography=None, internal_point=None),
+            schemas.GeographyCreate(path="hist2_b", geography=None, internal_point=None),
+        ],
+        obj_meta=meta,
+        geo_import=geo_import,
+        namespace=ns,
+    )
+    geo_layer, _ = crud.geo_layer.create(
+        db=db,
+        obj_in=schemas.GeoLayerCreate(path="hist2_blocks", description="test"),
+        obj_meta=meta,
+        namespace=ns,
+    )
+    loc, _ = crud.locality.create_bulk(
+        db=db,
+        objs_in=[schemas.LocalityCreate(canonical_path="hist2_loc", name="Hist2", aliases=None)],
+        obj_meta=meta,
+    )
+    crud.geo_layer.map_locality(
+        db=db, layer=geo_layer, locality=loc[0], geographies=[g[0] for g in geo], obj_meta=meta
+    )
+    col, _ = crud.column.create(
+        db=db,
+        obj_in=schemas.ColumnCreate(
+            canonical_path="hist2_pop",
+            description="test",
+            kind=ColumnKind.COUNT,
+            type=ColumnType.INT,
+        ),
+        obj_meta=meta,
+        namespace=ns,
+    )
+    view_template, _ = crud.view_template.create(
+        db=db,
+        obj_in=schemas.ViewTemplateCreate(
+            path="hist2_template", description="test", members=["hist2_pop"]
+        ),
+        resolved_members=[col.canonical_ref],
+        obj_meta=meta,
+        namespace=ns,
+    )
+    crud.column.set_values(
+        db=db, col=col, values=[(geo[0][0], 1), (geo[1][0], 2)], obj_meta=meta
+    )
+
+    # Backdate the resolution fixtures an hour, and the values to 10 minutes
+    # ago, so a 30-minute anchor resolves the template and set version but
+    # predates the values.
+    set_version = crud.geo_layer.get_set_by_locality(db=db, layer=geo_layer, locality=loc[0])
+    db.execute(
+        sql_text(
+            "UPDATE gerrydb.view_template_version "
+            "SET valid_from = now() - interval '1 hour' WHERE template_id = :tid"
+        ),
+        {"tid": view_template.template_id},
+    )
+    db.execute(
+        sql_text(
+            "UPDATE gerrydb.geo_set_version "
+            "SET valid_from = now() - interval '1 hour' WHERE set_version_id = :svid"
+        ),
+        {"svid": set_version.set_version_id},
+    )
+    db.execute(
+        sql_text(
+            "UPDATE gerrydb.column_value "
+            "SET valid_from = now() - interval '10 minutes' WHERE col_id = :cid"
+        ),
+        {"cid": col.col_id},
+    )
+
+    anchor = datetime.now(timezone.utc) - timedelta(minutes=30)
+    with pytest.raises(CreateValueError, match="Bad columns"):
+        crud.view.create(
+            db=db,
+            obj_in=schemas.ViewCreate(
+                path="hist2_backdated",
+                description="test",
+                template="hist2_template",
+                locality="hist2_loc",
+                layer="hist2_blocks",
+                valid_at=anchor,
+            ),
+            obj_meta=meta,
+            namespace=ns,
+            template=view_template,
+            locality=loc[0],
+            layer=geo_layer,
+        )
+
+    # A now-anchored view of the same data validates via the stats table.
+    view, _ = crud.view.create(
+        db=db,
+        obj_in=schemas.ViewCreate(
+            path="hist2_now",
+            description="test",
+            template="hist2_template",
+            locality="hist2_loc",
+            layer="hist2_blocks",
+        ),
+        obj_meta=meta,
+        namespace=ns,
+        template=view_template,
+        locality=loc[0],
+        layer=geo_layer,
+    )
+    assert view.num_geos == 2

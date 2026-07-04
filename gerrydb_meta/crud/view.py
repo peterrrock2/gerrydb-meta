@@ -35,8 +35,11 @@ from gerrydb_meta.enums import ViewRenderStatus
 # Views anchored within this window of "now" validate against the
 # column_value_count stats table (which tracks CURRENT values); older anchors
 # take the as-of column_value scan. The slack absorbs client clock skew and
-# request latency.
-STATS_FRESHNESS_SLACK = timedelta(seconds=60)
+# request latency, and is deliberately small: an anchor inside the window can
+# validate against coverage FIRST ADDED after it (value replacements do not
+# move counts, so only first-time coverage diverges), while a too-small slack
+# merely degrades skewed clients to the slower, always-correct scan.
+STATS_FRESHNESS_SLACK = timedelta(seconds=10)
 from gerrydb_meta.exceptions import CreateValueError, ViewConflictError
 
 _ST_ASBINARY_REGEX = re.compile(r"ST\_AsBinary\(([a-zA-Z0-9_.]+)\)")
@@ -1009,12 +1012,17 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             .filter(models.GeoSetMember.set_version_id.in_(view_set_version_ids))
             .subquery()
         )
-        raw_geo_meta_ids = db.execute(
-            select(models.Geography.path, models.Geography.meta_id).join(
-                members_sub, members_sub.c.geo_id == models.Geography.geo_id
+        # The dict itself is view-sized and required by the GeoPackage attrs
+        # writer (it aligns paths with valid dates); yield_per only drops the
+        # transient fetchall row list.
+        geo_meta_ids = {
+            row.path: row.meta_id
+            for row in db.execute(
+                select(models.Geography.path, models.Geography.meta_id)
+                .join(members_sub, members_sub.c.geo_id == models.Geography.geo_id)
+                .execution_options(yield_per=50_000)
             )
-        ).fetchall()
-        geo_meta_ids = {row.path: row.meta_id for row in raw_geo_meta_ids}
+        }
 
         distinct_meta_ids = set(geo_meta_ids.values())
         raw_distinct_meta = (
