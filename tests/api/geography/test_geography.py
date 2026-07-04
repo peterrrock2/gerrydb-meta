@@ -214,6 +214,49 @@ def test_api_geography_create_patch(ctx_public_namespace_read_write, unit_box_ms
     assert patch_body.valid_from > create_body.valid_from
 
 
+def test_api_geography_create_patch__return_geos_false(
+    ctx_public_namespace_read_write, unit_box, unit_box_msgpack
+):
+    ctx = ctx_public_namespace_read_write
+    namespace = ctx.namespace.path
+
+    create_response = ctx.client.post(
+        f"{GEOS_ROOT}/{namespace}",
+        headers=headers(ctx),
+        content=unit_box_msgpack,
+        params={"return_geos": "false"},
+    )
+    assert create_response.status_code == HTTPStatus.CREATED, msgpack.loads(create_response.content)
+    create_body = schemas.Geography(**msgpack.loads(create_response.content)[0])
+    assert create_body.path == "box"
+    assert create_body.geography is None
+    assert create_body.internal_point is None
+    assert create_body.valid_from is not None
+
+    shifted_unit_box = box(1, 1, 2, 2)
+    patch_response = ctx.client.patch(
+        f"{GEOS_ROOT}/{namespace}",
+        headers=headers(ctx),
+        content=msgpack.dumps([{"path": "box", "geography": shapely.wkb.dumps(shifted_unit_box)}]),
+        params={"return_geos": "false"},
+    )
+    assert patch_response.status_code == HTTPStatus.OK, msgpack.loads(patch_response.content)
+    patch_body = schemas.Geography(**msgpack.loads(patch_response.content)[0])
+    assert patch_body.geography is None
+    assert patch_body.valid_from > create_body.valid_from
+
+    # A default (echoing) patch shows the slim create/patch really stored shapes.
+    final_box = box(2, 2, 3, 3)
+    echo_response = ctx.client.patch(
+        f"{GEOS_ROOT}/{namespace}",
+        headers=headers(ctx),
+        content=msgpack.dumps([{"path": "box", "geography": shapely.wkb.dumps(final_box)}]),
+    )
+    assert echo_response.status_code == HTTPStatus.OK, msgpack.loads(echo_response.content)
+    echo_body = schemas.Geography(**msgpack.loads(echo_response.content)[0])
+    assert shapely.wkb.loads(echo_body.geography) == final_box
+
+
 def test_api_geography_patch__nonexistent(ctx_public_namespace_read_write, unit_box_msgpack):
     ctx = ctx_public_namespace_read_write
     patch_response = ctx.client.patch(

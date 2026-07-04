@@ -18,6 +18,34 @@ from gerrydb_meta.api.deps import get_db, get_geo_import, get_obj_meta, get_scop
 from gerrydb_meta.scopes import ScopeManager
 
 
+def _geo_response(*, geos, namespace, obj_meta, return_geos):
+    """Serializes create/patch results.
+
+    With `return_geos=False` the response carries paths and timestamps only;
+    echoing the stored WKB back to a bulk importer costs a geo_bin blob load
+    per geography and gigabytes on the wire.
+    """
+    return [
+        schemas.Geography(
+            path=geo.path,
+            geography=(
+                None
+                if not return_geos or geo_version.geography is None
+                else bytes(geo_version.geography.data)
+            ),
+            internal_point=(
+                None
+                if not return_geos or geo_version.internal_point is None
+                else bytes(geo_version.internal_point.data)
+            ),
+            namespace=namespace,
+            meta=schemas.ObjectMeta.from_attributes(obj_meta),
+            valid_from=geo_version.valid_from,
+        ).model_dump()
+        for geo, geo_version in geos
+    ]
+
+
 class GeographyApi(NamespacedObjectApi):
     def _create(self, router: APIRouter) -> Callable:
         @router.post(
@@ -36,6 +64,7 @@ class GeographyApi(NamespacedObjectApi):
             obj_meta: models.ObjectMeta = Depends(get_obj_meta),
             geo_import: models.GeoImport = Depends(get_geo_import),
             scopes: ScopeManager = Depends(get_scopes),
+            return_geos: bool = Query(default=True),
         ):
             namespace_obj = self._namespace_with_write(db=db, scopes=scopes, path=namespace)
             log.debug("BEFORE CREATE BULK GEOMETRY")
@@ -47,23 +76,9 @@ class GeographyApi(NamespacedObjectApi):
                 namespace=namespace_obj,
             )
             add_etag(response, etag)
-            response_geos = [
-                schemas.Geography(
-                    path=geo.path,
-                    geography=(
-                        None if geo_version.geography is None else bytes(geo_version.geography.data)
-                    ),
-                    internal_point=(
-                        None
-                        if geo_version.internal_point is None
-                        else bytes(geo_version.internal_point.data)
-                    ),
-                    namespace=namespace,
-                    meta=schemas.ObjectMeta.from_attributes(obj_meta),
-                    valid_from=geo_version.valid_from,
-                ).model_dump()
-                for geo, geo_version in geos
-            ]
+            response_geos = _geo_response(
+                geos=geos, namespace=namespace, obj_meta=obj_meta, return_geos=return_geos
+            )
             return MsgpackResponse(response_geos, status_code=HTTPStatus.CREATED)
 
         return create_route
@@ -85,6 +100,7 @@ class GeographyApi(NamespacedObjectApi):
             geo_import: models.GeoImport = Depends(get_geo_import),
             scopes: ScopeManager = Depends(get_scopes),
             allow_empty_polys: bool = Query(default=False),
+            return_geos: bool = Query(default=True),
         ):
             namespace_obj = self._namespace_with_write(db=db, scopes=scopes, path=namespace)
             geos, etag = self.crud.patch_bulk(
@@ -95,23 +111,9 @@ class GeographyApi(NamespacedObjectApi):
                 allow_empty_polys=allow_empty_polys,
             )
             add_etag(response, etag)
-            response_geos = [
-                schemas.Geography(
-                    path=geo.path,
-                    geography=(
-                        None if geo_version.geography is None else bytes(geo_version.geography.data)
-                    ),
-                    internal_point=(
-                        None
-                        if geo_version.internal_point is None
-                        else bytes(geo_version.internal_point.data)
-                    ),
-                    namespace=namespace,
-                    meta=schemas.ObjectMeta.from_attributes(obj_meta),
-                    valid_from=geo_version.valid_from,
-                ).model_dump()
-                for geo, geo_version in geos
-            ]
+            response_geos = _geo_response(
+                geos=geos, namespace=namespace, obj_meta=obj_meta, return_geos=return_geos
+            )
             return MsgpackResponse(response_geos)
 
         return patch_route
