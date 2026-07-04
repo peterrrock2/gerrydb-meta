@@ -851,6 +851,23 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
             column_aliases.append(alias)
 
+        # A semantically redundant geo_id band (min/max of the view's
+        # members). Without it the planner full-scans every national
+        # partition and hash-joins the member list (the pre-band pathology:
+        # cost tracked total database size, not the request); the band keeps
+        # it on plans whose cost tracks the membership. Exactly ONE band, by
+        # measurement: multi-band variants (per-set bands, exact islands,
+        # widest-gap caps) lost or tied in every benchmark, including the
+        # two-distant-clusters case at 16 GB and 4 GB of database memory --
+        # per-range plan overhead exceeds anything tighter ranges save.
+        # Full record: docs/baselines/2026-07-04_P4-gate.md.
+        member_lo, member_hi = db.execute(
+            select(
+                func.min(models.GeoSetMember.geo_id),
+                func.max(models.GeoSetMember.geo_id),
+            ).where(models.GeoSetMember.set_version_id.in_(view_set_version_ids))
+        ).one()
+
         # Grouped by geography *path*, not geo_id: cross-namespace views hold one
         # geo_id per namespace for the same path, and their values must merge into
         # a single output row.
@@ -859,6 +876,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             .select_from(models.ColumnValue)
             .join(models.Geography, models.Geography.geo_id == models.ColumnValue.geo_id)
             .where(models.ColumnValue.col_id.in_(col_ids))
+            .where(models.ColumnValue.geo_id.between(member_lo, member_hi))
             .where(models.ColumnValue.geo_id.in_(select(geo_id_query.c.geo_id)))
             .where(
                 models.ColumnValue.valid_from <= view.at,
