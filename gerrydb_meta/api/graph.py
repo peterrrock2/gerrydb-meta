@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
 
 from gerrydb_meta import crud, models, schemas
+from gerrydb_meta.api import render_cache
 from gerrydb_meta.api.base import (
     add_etag,
     geo_set_from_paths,
@@ -229,6 +230,19 @@ def render_graph(
     has_gcs_context = storage_client is not None
 
     cached_render_meta = crud.graph.get_cached_render(db=db, graph=graph_obj)
+    if cached_render_meta is not None and not has_gcs_context:
+        cached_path = render_cache.cached_file(cached_render_meta.path)
+        if cached_path is not None:
+            log.debug("Serving graph render from the local cache.")
+            return FileResponse(
+                cached_path,
+                media_type=GPKG_MEDIA_TYPE,
+                headers={
+                    "ETag": etag.hex,
+                    "X-GerryDB-Graph-Render-ID": cached_render_meta.render_id.hex,
+                    "Content-Encoding": "identity",
+                },
+            )
     if cached_render_meta is not None and has_gcs_context:  # pragma: no cover
         log.debug("Found cached render")
         render_path = urlparse(cached_render_meta.path)
@@ -310,9 +324,17 @@ def render_graph(
                 "Failed to serve rendered graph via Google Cloud Storage. "
                 "Falling back to direct streaming."
             )
+    cached_path = render_cache.store(render_uuid.hex, gpkg_path)
+    crud.graph.cache_render(
+        db=db,
+        graph=graph_obj,
+        created_by=user,
+        render_id=render_uuid,
+        path=str(cached_path),
+    )
     # "identity" makes GZipMiddleware pass the GeoPackage through uncompressed.
     return FileResponse(
-        gpkg_path,
+        cached_path,
         media_type=GPKG_MEDIA_TYPE,
         headers={
             "ETag": etag.hex,

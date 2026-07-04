@@ -18,6 +18,7 @@ from sqlalchemy import (
     label,
     or_,
     select,
+    text,
     union,
 )
 from sqlalchemy.dialects import postgresql
@@ -88,6 +89,18 @@ def _view_columns(db: Session, template_version_id: int) -> dict[str, models.Dat
     }
 
 
+def _stream_rows(db: Session, stmt):
+    """Lazily streams a statement's rows with a server-side cursor.
+
+    Execution starts at first iteration, not at context-build time: render
+    contexts are consumed after the caller commits (view renders) or later in
+    the same transaction (graph renders), and an eagerly opened cursor would
+    not survive the commit. yield_per bounds memory to one batch of rows.
+    """
+    for row in db.execute(stmt.execution_options(yield_per=50_000)):
+        yield row
+
+
 @dataclass(frozen=True)
 class ViewRenderContext:
     """Context for rendering a view's data and metadata."""
@@ -96,13 +109,20 @@ class ViewRenderContext:
     columns: dict[str, models.DataColumn]
     plans: list[models.Plan]
     plan_labels: list[str]
-    plan_assignments: Sequence | None
-    graph_edges: Sequence | None
+    # Lazily streamed (generators): row batches arrive as the GeoPackage
+    # writer consumes them, bounding render memory.
+    plan_assignments: Iterable | None
+    graph_edges: Iterable | None
     geo_meta: dict[int, models.ObjectMeta]
     geo_meta_ids: dict[str, int]  # by path
     geo_valid_from_dates: dict[str, datetime]
 
-    # Bulk queries for `ogr2ogr`.
+    # The materialized pivot table backing this render (dropped by the API
+    # layer once the GeoPackage is written; render:sweep catches orphans).
+    render_id: uuid.UUID
+    render_table: str
+
+    # Bulk queries for `ogr2ogr` (trivial SELECTs against render_table).
     geo_query: str
     internal_point_query: str
 
@@ -853,6 +873,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 models.GeoVersion.geo_id,
                 models.GeoVersion.geo_bin_id,
                 models.GeoVersion.internal_point,
+                models.GeoVersion.valid_from,
                 func.row_number()
                 .over(
                     partition_by=models.GeoVersion.geo_id,
@@ -877,6 +898,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 models.Geography.path,
                 models.GeoBin.geography,
                 current_geo_version_sub.c.internal_point,
+                current_geo_version_sub.c.valid_from,
                 # One geometry row per path: cross-namespace views carry the same
                 # path once per namespace (bin-deduped, so byte-identical); pick
                 # deterministically by lowest geo_id.
@@ -900,10 +922,12 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             .subquery("geo_sub")
         )
 
-        geo_query = (
+        pivot_query = (
             select(
                 geo_sub.c.path,
                 geo_sub.c.geography,
+                geo_sub.c.internal_point,
+                geo_sub.c.valid_from,
                 *[col_table_sub.c[alias] for alias in column_aliases],
             )
             .select_from(geo_sub)
@@ -911,45 +935,42 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             .where(geo_sub.c.path_row_num == 1)
         )
 
-        internal_point_query = select(geo_sub.c.path, geo_sub.c.internal_point).where(
-            geo_sub.c.path_row_num == 1
+        # Materialize the pivot + geometry join once. Both ogr2ogr passes and
+        # the valid-dates lookup read the result instead of re-running the
+        # window/pivot machinery (the old shape executed it three times). The
+        # regex strips the ST_AsBinary() calls GeoAlchemy2 adds, so the table
+        # stores raw geography columns that ogr2ogr can read as geometry.
+        render_id = uuid.uuid4()
+        render_table = f"{models.SCHEMA}.render_{render_id.hex}"
+        full_pivot_query = re.sub(
+            _ST_ASBINARY_REGEX,
+            r"\1",
+            str(
+                pivot_query.compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            ),
         )
+        log.debug("The pivot query is %s", full_pivot_query)
+        # Created ON the session: the pivot must see this transaction's
+        # uncommitted data, and any other connection would deadlock against
+        # locks this session already holds (e.g. a column-create's partition
+        # DDL). The caller must COMMIT before running ogr2ogr, which connects
+        # separately and can only see the table once committed.
+        db.execute(text(f"CREATE UNLOGGED TABLE {render_table} AS {full_pivot_query}"))
+
+        quoted_aliases = ", ".join(f'"{alias}"' for alias in column_aliases)
+        full_geo_query = f"SELECT path, geography, {quoted_aliases} FROM {render_table}"
+        full_internal_point_query = f"SELECT path, internal_point FROM {render_table}"
 
         plans, plan_labels, plan_assignments = self._plans(
             db, view, view_set_version_ids=view_set_version_ids
         )
         geo_meta_ids, geo_meta = self._geo_meta(db, view, view_set_version_ids=view_set_version_ids)
-        geo_valid_from_dates = self._geo_valid_dates(
-            db, view, view_set_version_ids=view_set_version_ids
+        geo_valid_from_dates = dict(
+            db.execute(text(f"SELECT path, valid_from FROM {render_table}")).all()
         )
-
-        # Query generation: substitute in literals and remove the
-        # ST_AsBinary() calls added by GeoAlchemy2.
-        full_geo_query = re.sub(
-            _ST_ASBINARY_REGEX,
-            r"\1",
-            str(
-                geo_query.compile(
-                    dialect=postgresql.dialect(),
-                    compile_kwargs={"literal_binds": True},
-                )
-            ),
-        )
-
-        log.debug("The new geo query is %s", full_geo_query)
-
-        full_internal_point_query = re.sub(
-            _ST_ASBINARY_REGEX,
-            r"\1",
-            str(
-                internal_point_query.compile(
-                    dialect=postgresql.dialect(),
-                    compile_kwargs={"literal_binds": True},
-                )
-            ),
-        )
-
-        log.debug("The new internal point query is %s", full_internal_point_query)
 
         ret = ViewRenderContext(
             view=view,
@@ -961,6 +982,8 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             geo_meta=geo_meta,
             geo_meta_ids=geo_meta_ids,
             geo_valid_from_dates=geo_valid_from_dates,
+            render_id=render_id,
+            render_table=render_table,
             geo_query=full_geo_query,
             internal_point_query=full_internal_point_query,
         )
@@ -1002,61 +1025,6 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         distinct_meta = {meta.meta_id: meta for meta in raw_distinct_meta}
 
         return geo_meta_ids, distinct_meta
-
-    def _geo_valid_dates(
-        self,
-        db: Session,
-        view: models.View,
-        view_set_version_ids: list[int] | None = None,
-    ) -> dict[str, datetime]:
-        """Gets the valid dates for each geometry.
-
-        Returns:
-            A dictionary mapping geometry IDs to valid dates.
-        """
-        if view_set_version_ids is None:
-            view_set_version_ids = self._view_set_version_ids(db, view.view_id)
-
-        members_sub = (
-            select(models.GeoSetMember.geo_id)
-            .where(models.GeoSetMember.set_version_id.in_(view_set_version_ids))
-            .distinct()
-            .subquery("members_sub")
-        )
-        current_geo_version_sub = (
-            select(
-                models.GeoVersion.geo_id,
-                models.GeoVersion.valid_from,
-                func.row_number()
-                .over(
-                    partition_by=models.GeoVersion.geo_id,
-                    order_by=models.GeoVersion.valid_from.desc(),
-                )
-                .label("row_num"),
-            )
-            .join(members_sub, members_sub.c.geo_id == models.GeoVersion.geo_id)
-            .where(
-                models.GeoVersion.valid_from <= view.at,
-                or_(
-                    models.GeoVersion.valid_to.is_(None),
-                    models.GeoVersion.valid_to >= view.at,
-                ),
-            )
-            .subquery("current_geo_version_sub")
-        )
-
-        query = (
-            select(models.Geography.path, current_geo_version_sub.c.valid_from)
-            .join(
-                current_geo_version_sub,
-                models.Geography.geo_id == current_geo_version_sub.c.geo_id,
-            )
-            .where(current_geo_version_sub.c.row_num == 1)
-        )
-
-        result = db.execute(query)
-
-        return {row.path: row.valid_from for row in result}
 
     def _plans(
         self,
@@ -1139,7 +1107,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 plan_sub,
                 plan_sub.c.geo_id == members_sub.c.geo_id,
             )
-        plan_assignments = db.execute(plan_assignment_query).fetchall()
+        plan_assignments = _stream_rows(db, plan_assignment_query)
 
         return visible_plans, plan_labels, plan_assignments
 
@@ -1169,7 +1137,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
         )
 
-        return db.execute(graph_edges_query).fetchall()
+        return _stream_rows(db, graph_edges_query)
 
 
 view = CRView(models.View)

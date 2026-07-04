@@ -177,8 +177,9 @@ class CRGraph(NamespacedCRBase[models.Graph, schemas.GraphCreate]):
             )
         )
         log.debug("GRAPH EDGES QUERY %s", graph_edges_query)
-        ret = db.execute(graph_edges_query).fetchall()
-        log.debug("GRAPH EDGES QUERY RET %s", len(ret))
+        from gerrydb_meta.crud.view import _stream_rows
+
+        ret = _stream_rows(db, graph_edges_query)
         return ret
 
     def _geo_meta(

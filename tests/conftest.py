@@ -40,6 +40,12 @@ def db_schema(db_engine):
         cleanup_transaction.commit()
 
 
+@pytest.fixture(autouse=True)
+def _render_cache_tmpdir(tmp_path, monkeypatch):
+    """Keeps server-side render caching inside the test sandbox."""
+    monkeypatch.setenv("GERRYDB_RENDER_CACHE_DIR", str(tmp_path / "render-cache"))
+
+
 @pytest.fixture
 def db(db_schema):
     """SQLAlchemy ORM session (rolls back on cleanup)."""

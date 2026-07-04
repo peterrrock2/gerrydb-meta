@@ -604,7 +604,8 @@ def __insert_plan_assignments(
 
 def view_to_gpkg(context: ViewRenderContext, db_config: str) -> tuple[uuid.UUID, Path]:
     """Renders a view (with metadata) to a GeoPackage."""
-    render_uuid = uuid.uuid4()
+    # Matches the id in the materialized render table's name.
+    render_uuid = context.render_id
     temp_dir = Path(tempfile.mkdtemp())
     gpkg_path = Path(temp_dir) / f"{render_uuid.hex}.gpkg"
 

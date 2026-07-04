@@ -1,6 +1,7 @@
 import logging
 import os
 import sqlite3
+import uuid
 import subprocess
 import sys
 import time
@@ -41,6 +42,8 @@ class DummyContext:
     view = SimpleNamespace(
         path="foo", proj=None, loc=SimpleNamespace(default_proj=None), num_geos=0
     )
+    render_id = uuid.uuid4()
+    render_table = "gerrydb.render_dummy"
     geo_query = "SELECT * from dummy_table"
     internal_point_query = "SELECT 2"
     columns = {}
@@ -1268,6 +1271,26 @@ def test_view_render_api(db, me_2010_gdf, me_2010_nx_graph, me_2010_plan_dict, c
     )
 
     path = response.path
+
+    # A repeat request serves the same file from the local render cache
+    # without re-rendering (still exactly one ViewRender row).
+    repeat = view_api.render_view(
+        namespace=ns.path,
+        path="me_test_api_view",
+        db=db,
+        db_config="PG:postgresql://postgres:test@localhost:54321",
+        user=user,
+        scopes=get_scopes(user),
+    )
+    assert repeat.path == path
+    assert (
+        repeat.headers["x-gerrydb-view-render-id"]
+        == response.headers["x-gerrydb-view-render-id"]
+    )
+    assert (
+        db.query(models.ViewRender).filter(models.ViewRender.view_id == view.view_id).count()
+        == 1
+    )
 
     gdf = gpd.read_file(path, layer="me_test_api_view")
 

@@ -13,7 +13,10 @@ from google.api_core.exceptions import GoogleAPIError
 from google.auth.exceptions import GoogleAuthError
 from google.cloud import storage
 from google.oauth2.service_account import Credentials
+from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session
+
+from gerrydb_meta.api import render_cache
 from uvicorn.config import logger as log
 
 from gerrydb_meta import crud, models, schemas
@@ -232,6 +235,19 @@ def render_view(
     has_gcs_context = storage_client is not None
 
     cached_render_meta = crud.view.get_cached_render(db=db, view=view_obj)
+    if cached_render_meta is not None and not has_gcs_context:
+        cached_path = render_cache.cached_file(cached_render_meta.path)
+        if cached_path is not None:
+            log.debug("Serving view render from the local cache.")
+            return FileResponse(
+                cached_path,
+                media_type=GPKG_MEDIA_TYPE,
+                headers={
+                    "ETag": etag.hex,
+                    "X-GerryDB-View-Render-ID": cached_render_meta.render_id.hex,
+                    "Content-Encoding": "identity",
+                },
+            )
     if cached_render_meta is not None and has_gcs_context:  # pragma: no cover
         log.debug("Found cached render")
         render_path = urlparse(cached_render_meta.path)
@@ -263,9 +279,21 @@ def render_view(
     log.debug("BEFORE RENDER")
     start = time.perf_counter()
     render_ctx = crud.view.render(db=db, view=view_obj)
+    # ogr2ogr connects separately: the materialized render table must be
+    # committed before it runs.
+    db.commit()
     log.debug("Time to render: %s", time.perf_counter() - start)
     start = time.perf_counter()
-    render_uuid, gpkg_path = view_to_gpkg(context=render_ctx, db_config=db_config)
+    try:
+        render_uuid, gpkg_path = view_to_gpkg(context=render_ctx, db_config=db_config)
+    finally:
+        # The GeoPackage owns the data now. If the drop is skipped (e.g. the
+        # process dies mid-render), `admin.py render:sweep` collects orphans.
+        try:
+            db.execute(sql_text(f"DROP TABLE IF EXISTS {render_ctx.render_table}"))
+            db.commit()
+        except Exception:
+            log.exception("Failed to drop render table %s.", render_ctx.render_table)
     log.debug("Time to write GPKG: %s", time.perf_counter() - start)
     log.debug("AFTER GPKG")
 
@@ -313,9 +341,17 @@ def render_view(
                 "Falling back to direct streaming."
             )
     log.debug("Returning GPKG response")
+    cached_path = render_cache.store(render_uuid.hex, gpkg_path)
+    crud.view.cache_render(
+        db=db,
+        view=view_obj,
+        created_by=user,
+        render_id=render_uuid,
+        path=str(cached_path),
+    )
     # "identity" makes GZipMiddleware pass the GeoPackage through uncompressed.
     return FileResponse(
-        gpkg_path,
+        cached_path,
         media_type=GPKG_MEDIA_TYPE,
         headers={
             "ETag": etag.hex,

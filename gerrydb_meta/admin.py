@@ -827,5 +827,128 @@ def user_check_admin(email: str):
         print(f"User {user} is an admin: {is_admin}")
 
 
+@cli.command("render:sweep")
+@click.option("--dry-run", is_flag=True, help="List orphaned render tables without dropping.")
+def render_sweep(dry_run: bool):
+    """Drops orphaned render_* tables.
+
+    Renders materialize into gerrydb.render_<uuid> tables that the API drops
+    when the GeoPackage is written; a process dying mid-render leaves the
+    table behind. Only run while no renders are in flight (an in-flight
+    render's table is indistinguishable from an orphan).
+    """
+    from sqlalchemy import text
+
+    with admin_context() as admin:
+        rows = admin.session.execute(
+            text(
+                """
+                SELECT c.relname
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'gerrydb'
+                  AND c.relkind = 'r'
+                  AND c.relname ~ '^render_[0-9a-f]{32}$'
+                ORDER BY c.relname
+                """
+            )
+        ).all()
+        if not rows:
+            print("No render tables found.")
+            return
+        for (relname,) in rows:
+            if dry_run:
+                print(f"orphan: gerrydb.{relname}")
+            else:
+                admin.session.execute(text(f"DROP TABLE IF EXISTS gerrydb.{relname}"))
+                print(f"dropped: gerrydb.{relname}")
+        if not dry_run:
+            admin.session.commit()
+
+
+@cli.command("stats:revalidate")
+@click.option("--fix", is_flag=True, help="Rewrite drifted rows instead of only reporting.")
+def stats_revalidate(fix: bool):
+    """Recomputes current-value counts from column_value and compares them to
+    the column_value_count stats table.
+
+    View-create validation reads the stats table instead of scanning
+    column_value; this is the on-demand full scan. Only current set versions
+    are checked and fixed: deprecated versions intentionally keep the counts
+    they had when deprecated. Expect the scan to take a while on a loaded
+    database.
+    """
+    from sqlalchemy import text
+
+    drift_sql = text(
+        """
+        WITH actual AS (
+            SELECT cv.col_id, m.set_version_id, COUNT(*) AS n
+            FROM gerrydb.column_value cv
+            JOIN gerrydb.geo_set_member m ON m.geo_id = cv.geo_id
+            JOIN gerrydb.geo_set_version sv
+                ON sv.set_version_id = m.set_version_id
+            WHERE cv.valid_to IS NULL AND sv.valid_to IS NULL
+            GROUP BY cv.col_id, m.set_version_id
+        ),
+        stored AS (
+            SELECT c.col_id, c.set_version_id, c.count
+            FROM gerrydb.column_value_count c
+            JOIN gerrydb.geo_set_version sv
+                ON sv.set_version_id = c.set_version_id
+            WHERE sv.valid_to IS NULL
+        )
+        SELECT
+            COALESCE(a.col_id, s.col_id) AS col_id,
+            COALESCE(a.set_version_id, s.set_version_id) AS set_version_id,
+            s.count AS stored,
+            a.n AS actual
+        FROM actual a
+        FULL OUTER JOIN stored s
+            ON s.col_id = a.col_id AND s.set_version_id = a.set_version_id
+        WHERE COALESCE(s.count, -1) <> COALESCE(a.n, -1)
+        ORDER BY 1, 2
+        """
+    )
+    with admin_context() as admin:
+        rows = admin.session.execute(drift_sql).all()
+        if not rows:
+            print("column_value_count is consistent with column_value.")
+            return
+        for col_id, set_version_id, stored, actual in rows:
+            print(
+                f"drift: col_id={col_id} set_version_id={set_version_id} "
+                f"stored={stored} actual={actual}"
+            )
+        print(f"{len(rows)} drifted row(s).")
+        if fix:
+            admin.session.execute(
+                text(
+                    """
+                    DELETE FROM gerrydb.column_value_count c
+                    USING gerrydb.geo_set_version sv
+                    WHERE sv.set_version_id = c.set_version_id
+                      AND sv.valid_to IS NULL
+                    """
+                )
+            )
+            admin.session.execute(
+                text(
+                    """
+                    INSERT INTO gerrydb.column_value_count (col_id, set_version_id, count)
+                    SELECT cv.col_id, m.set_version_id, COUNT(*)
+                    FROM gerrydb.column_value cv
+                    JOIN gerrydb.geo_set_member m ON m.geo_id = cv.geo_id
+                    JOIN gerrydb.geo_set_version sv
+                        ON sv.set_version_id = m.set_version_id
+                    WHERE cv.valid_to IS NULL AND sv.valid_to IS NULL
+                    GROUP BY cv.col_id, m.set_version_id
+                    """
+                )
+            )
+            admin.session.commit()
+            print("Rebuilt counts for current set versions.")
+
+
 if __name__ == "__main__":
     cli()  # pragma: no cover
