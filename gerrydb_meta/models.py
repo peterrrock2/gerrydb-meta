@@ -270,6 +270,12 @@ class GeoSetVersion(Base):
     set_version_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     layer_id: Mapped[int] = mapped_column(Integer, ForeignKey("geo_layer.layer_id"), nullable=False)
     loc_id: Mapped[int] = mapped_column(Integer, ForeignKey("locality.loc_id"), nullable=False)
+    # The members' namespace (sets are single-namespace by construction).
+    # This cannot be derived from the layer: members' namespace need not
+    # equal the layer's namespace.
+    namespace_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("namespace.namespace_id"), nullable=False, index=True
+    )
     valid_from: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -580,6 +586,23 @@ class ColumnValue(Base):
     val_bool: Mapped[bool] = mapped_column(Boolean, nullable=True)
 
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta")
+
+
+class ColumnValueCount(Base):
+    """Count of member geographies with a current value, per column and set version.
+
+    Maintained by the value writers (`set_values`, the direct bulk loader) and
+    seeded by `map_locality` for new set versions, so view validation can check
+    column coverage without scanning `column_value` partitions.
+    """
+
+    __tablename__ = "column_value_count"
+
+    col_id: Mapped[int] = mapped_column(Integer, ForeignKey("column.col_id"), primary_key=True)
+    set_version_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("geo_set_version.set_version_id"), primary_key=True
+    )
+    count: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
 class Plan(Base):

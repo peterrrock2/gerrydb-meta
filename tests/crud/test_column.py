@@ -187,6 +187,7 @@ def test_crud_column_set_values(db_with_meta):
         db.query(models.ColumnValue)
         .join(models.ColumnRef, models.ColumnValue.col_id == models.ColumnRef.col_id)
         .filter(models.ColumnRef.path == "geo_identifier")
+        .order_by(models.ColumnValue.geo_id)
         .all()
     )
     assert len(cols_list) == 2
@@ -207,6 +208,94 @@ def test_crud_column_set_values(db_with_meta):
 
     assert cols_list[0].val_bool is None
     assert cols_list[1].val_bool is None
+
+
+def test_crud_column_value_counts(db_with_meta):
+    """Counts track first-time values only; remaps seed the new set version."""
+    db, meta = db_with_meta
+
+    ns = make_atlantis_ns(db, meta)
+    geo_import, _ = crud.geo_import.create(db=db, obj_meta=meta, namespace=ns)
+    geo, _ = crud.geography.create_bulk(
+        db=db,
+        objs_in=[
+            schemas.GeographyCreate(path=f"district{i}", geography=None, internal_point=None)
+            for i in range(2)
+        ],
+        obj_meta=meta,
+        geo_import=geo_import,
+        namespace=ns,
+    )
+    geos = [pair[0] for pair in geo]
+
+    layer, _ = crud.geo_layer.create(
+        db=db,
+        obj_in=schemas.GeoLayerCreate(path="value_count_layer", description="test"),
+        obj_meta=meta,
+        namespace=ns,
+    )
+    loc, _ = crud.locality.create_bulk(
+        db=db,
+        objs_in=[schemas.LocalityCreate(canonical_path="value_count_loc", name="Value County")],
+        obj_meta=meta,
+    )
+    crud.geo_layer.map_locality(
+        db=db, layer=layer, locality=loc[0], geographies=geos, obj_meta=meta
+    )
+    set_version = crud.geo_layer.get_set_by_locality(db=db, layer=layer, locality=loc[0])
+    assert set_version.namespace_id == ns.namespace_id
+
+    col, _ = crud.column.create(
+        db=db,
+        obj_in=schemas.ColumnCreate(
+            canonical_path="value_count_col",
+            description="test",
+            kind=ColumnKind.COUNT,
+            type=ColumnType.INT,
+        ),
+        obj_meta=meta,
+        namespace=ns,
+    )
+
+    def count_for(svid):
+        row = (
+            db.query(models.ColumnValueCount)
+            .filter_by(col_id=col.col_id, set_version_id=svid)
+            .one_or_none()
+        )
+        return None if row is None else row.count
+
+    crud.column.set_values(
+        db=db, col=col, values=[(geos[0], 1), (geos[1], 2)], obj_meta=meta
+    )
+    assert count_for(set_version.set_version_id) == 2
+
+    # Changing a value replaces a version; the count must not move.
+    crud.column.set_values(
+        db=db, col=col, values=[(geos[0], 5), (geos[1], 2)], obj_meta=meta
+    )
+    assert count_for(set_version.set_version_id) == 2
+
+    # A remap creates a new set version seeded from current values; the
+    # deprecated version keeps its count.
+    geo3, _ = crud.geography.create_bulk(
+        db=db,
+        objs_in=[schemas.GeographyCreate(path="district2", geography=None, internal_point=None)],
+        obj_meta=meta,
+        geo_import=geo_import,
+        namespace=ns,
+    )
+    new_geos = geos + [geo3[0][0]]
+    crud.geo_layer.map_locality(
+        db=db, layer=layer, locality=loc[0], geographies=new_geos, obj_meta=meta
+    )
+    new_set_version = crud.geo_layer.get_set_by_locality(db=db, layer=layer, locality=loc[0])
+    assert new_set_version.set_version_id != set_version.set_version_id
+    assert count_for(new_set_version.set_version_id) == 2
+
+    crud.column.set_values(db=db, col=col, values=[(geo3[0][0], 7)], obj_meta=meta)
+    assert count_for(new_set_version.set_version_id) == 3
+    assert count_for(set_version.set_version_id) == 2
 
 
 def test_crud_column_set_values__error_dup_geo(db_with_meta):

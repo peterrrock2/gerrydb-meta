@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Collection, Tuple
 
-from sqlalchemy import exc, insert, select, tuple_, update
+from sqlalchemy import exc, insert, select, text, tuple_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
@@ -14,6 +14,35 @@ from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.enums import ColumnType
 from gerrydb_meta.exceptions import ColumnValueTypeError, CreateValueError
 from gerrydb_meta.utils import create_column_value_partition_text
+
+def increment_column_value_counts(db: Session, *, col_id: int, geo_ids: Collection[int]) -> None:
+    """Bumps per-(column, set version) current-value counts after `geo_ids`
+    gain their first current value for `col_id`.
+
+    Only geographies that previously had no current value belong in `geo_ids`:
+    a value change replaces a version and leaves the count unchanged. Counts
+    are maintained for current set versions only; deprecated versions keep the
+    counts they had when deprecated.
+    """
+    if not geo_ids:
+        return
+    db.execute(
+        text(
+            f"INSERT INTO {models.SCHEMA}.column_value_count "
+            "(col_id, set_version_id, count) "
+            "SELECT :col_id, m.set_version_id, COUNT(*) "
+            f"FROM {models.SCHEMA}.geo_set_member m "
+            f"JOIN {models.SCHEMA}.geo_set_version sv "
+            "ON sv.set_version_id = m.set_version_id "
+            "WHERE m.geo_id = ANY(CAST(:geo_ids AS integer[])) "
+            "AND sv.valid_to IS NULL "
+            "GROUP BY m.set_version_id "
+            "ON CONFLICT (col_id, set_version_id) DO UPDATE "
+            "SET count = column_value_count.count + EXCLUDED.count"
+        ),
+        {"col_id": col_id, "geo_ids": list(geo_ids)},
+    )
+
 
 # Maps the `ColumnType` enum to columns in `ColumnValue`.
 COLUMN_TYPE_TO_VALUE_COLUMN = {
@@ -279,6 +308,12 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
                     )
                     .values(valid_to=now)
                 )
+            stale_geo_ids = {t.geo_id for t in with_tuples}
+            increment_column_value_counts(
+                db,
+                col_id=col.col_id,
+                geo_ids=[g for g in geo_ids_to_insert if g not in stale_geo_ids],
+            )
 
     def patch(
         self,

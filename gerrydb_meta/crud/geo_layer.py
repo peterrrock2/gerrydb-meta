@@ -106,6 +106,8 @@ class CRGeoLayer(NamespacedCRBase[models.GeoLayer, schemas.GeoLayerCreate]):
         """Maps a set of `geographies` to `layer` in `locality`."""
         now = datetime.now(timezone.utc)
 
+        if not geographies:
+            raise CreateValueError("Cannot map an empty set of geographies to a layer.")
         if len(set(geo.namespace_id for geo in geographies)) > 1:
             raise CreateValueError(
                 "Cannot map geographies in multiple namespaces to a geographic layer."
@@ -154,6 +156,7 @@ class CRGeoLayer(NamespacedCRBase[models.GeoLayer, schemas.GeoLayerCreate]):
             set_version = models.GeoSetVersion(
                 layer_id=layer.layer_id,
                 loc_id=locality.loc_id,
+                namespace_id=geographies[0].namespace_id,
                 meta_id=obj_meta.meta_id,
                 valid_from=now,
             )
@@ -170,6 +173,22 @@ class CRGeoLayer(NamespacedCRBase[models.GeoLayer, schemas.GeoLayerCreate]):
                     }
                     for geo in geographies
                 ],
+            )
+
+            # Seed current-value counts for the new set version. During bulk
+            # loads mapping precedes value loads, so this is normally empty.
+            db.execute(
+                text(
+                    f"INSERT INTO {models.SCHEMA}.column_value_count "
+                    "(col_id, set_version_id, count) "
+                    "SELECT cv.col_id, :set_version_id, COUNT(*) "
+                    f"FROM {models.SCHEMA}.column_value cv "
+                    f"JOIN {models.SCHEMA}.geo_set_member m ON m.geo_id = cv.geo_id "
+                    "WHERE m.set_version_id = :set_version_id "
+                    "AND cv.valid_to IS NULL "
+                    "GROUP BY cv.col_id"
+                ),
+                {"set_version_id": set_version.set_version_id},
             )
 
     def get_set_by_locality(
