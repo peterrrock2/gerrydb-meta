@@ -5,6 +5,7 @@ import subprocess
 import time
 from datetime import timedelta
 from http import HTTPStatus
+from typing import Union
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -41,7 +42,7 @@ router = APIRouter()
 
 @router.post(
     "/{namespace}",
-    response_model=schemas.Graph,
+    response_model=Union[schemas.Graph, schemas.GraphMeta],
     status_code=HTTPStatus.CREATED,
     dependencies=[Depends(can_read_localities)],
 )
@@ -50,10 +51,11 @@ def create_graph(
     response: Response,
     namespace: str,
     obj_in: schemas.GraphCreate,
+    include_edges: bool = True,
     db: Session = Depends(get_db),
     obj_meta: models.ObjectMeta = Depends(get_obj_meta),
     scopes: ScopeManager = Depends(get_scopes),
-) -> schemas.Graph:
+) -> Union[schemas.Graph, schemas.GraphMeta]:
     log.debug("TOP OF API CREATE GRAPH")
     start = time.perf_counter()
     namespace_obj = crud.namespace.get(db=db, path=namespace)
@@ -101,7 +103,12 @@ def create_graph(
     )
     log.debug("Time to create graph: %s", time.perf_counter() - start)
     add_etag(response, etag)
-    return schemas.Graph.from_attributes(graph)
+    if include_edges:
+        # Echoing every edge back is expensive for large graphs (it reloads
+        # the edge rows and both geographies per edge); bulk imports pass
+        # include_edges=false to get metadata only.
+        return schemas.Graph.from_attributes(graph)
+    return schemas.GraphMeta.from_attributes(graph)
 
 
 @router.get(

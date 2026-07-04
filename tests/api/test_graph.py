@@ -104,7 +104,7 @@ def test_good_graph_create_get(ctx_no_scopes, me_2010_gdf, me_2010_nx_graph, cap
         "to read data in this namespace."
     ) in str(excinfo.value.detail)
 
-    _ = create_graph(
+    created = create_graph(
         response=response,
         namespace=ns.path,
         obj_in=schemas.GraphCreate(
@@ -118,6 +118,27 @@ def test_good_graph_create_get(ctx_no_scopes, me_2010_gdf, me_2010_nx_graph, cap
         obj_meta=meta,
         scopes=scopes,
     )
+    assert isinstance(created, schemas.Graph)
+    assert len(created.edges) == len(me_2010_nx_graph.edges)
+
+    meta_only = create_graph(
+        response=Response(),
+        namespace=ns.path,
+        obj_in=schemas.GraphCreate(
+            path="me_2010_county_dual_meta_only",
+            description="The maine 2010 county dual graph",
+            locality="main_graph",
+            layer="counties_graph",
+            edges=list(me_2010_nx_graph.edges(data=True)),
+        ),
+        include_edges=False,
+        db=db,
+        obj_meta=meta,
+        scopes=scopes,
+    )
+    assert isinstance(meta_only, schemas.GraphMeta)
+    assert not isinstance(meta_only, schemas.Graph)
+    assert meta_only.path == "me_2010_county_dual_meta_only"
 
     response2 = Response()
 
@@ -179,8 +200,14 @@ def test_good_graph_create_get(ctx_no_scopes, me_2010_gdf, me_2010_nx_graph, cap
         scopes=scopes,
     )
 
-    assert len(all_graph_check) == 1
-    assert graph_check == all_graph_check[0]
+    assert len(all_graph_check) == 2
+    assert {g.path for g in all_graph_check} == {
+        "me_2010_county_dual",
+        "me_2010_county_dual_meta_only",
+    }
+    assert graph_check == next(
+        g for g in all_graph_check if g.path == "me_2010_county_dual"
+    )
 
 
 def test_graph_render(ctx_no_scopes, me_2010_gdf, me_2010_nx_graph, caplog):
