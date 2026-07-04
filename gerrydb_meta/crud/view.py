@@ -4,9 +4,9 @@ import re
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 from sqlalchemy import (
     Sequence,
@@ -30,6 +30,12 @@ from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.crud.column import COLUMN_TYPE_TO_VALUE_COLUMN
 from gerrydb_meta.enums import ViewRenderStatus
+
+# Views anchored within this window of "now" validate against the
+# column_value_count stats table (which tracks CURRENT values); older anchors
+# take the as-of column_value scan. The slack absorbs client clock skew and
+# request latency.
+STATS_FRESHNESS_SLACK = timedelta(seconds=60)
 from gerrydb_meta.exceptions import CreateValueError, ViewConflictError
 
 _ST_ASBINARY_REGEX = re.compile(r"ST\_AsBinary\(([a-zA-Z0-9_.]+)\)")
@@ -164,16 +170,8 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 models.GeoSetVersion.loc_id == loc_id,
             )
             .join(
-                models.GeoSetMember,
-                models.GeoSetMember.set_version_id == models.GeoSetVersion.set_version_id,
-            )
-            .join(
-                models.Geography,
-                models.Geography.geo_id == models.GeoSetMember.geo_id,
-            )
-            .join(
                 models.ColumnRef,
-                models.ColumnRef.namespace_id == models.Geography.namespace_id,
+                models.ColumnRef.namespace_id == models.GeoSetVersion.namespace_id,
             )
             .join(
                 models.ViewTemplateColumnMember,
@@ -199,16 +197,8 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 models.GeoSetVersion.loc_id == loc_id,
             )
             .join(
-                models.GeoSetMember,
-                models.GeoSetMember.set_version_id == models.GeoSetVersion.set_version_id,
-            )
-            .join(
-                models.Geography,
-                models.Geography.geo_id == models.GeoSetMember.geo_id,
-            )
-            .join(
                 models.ColumnRef,
-                models.ColumnRef.namespace_id == models.Geography.namespace_id,
+                models.ColumnRef.namespace_id == models.GeoSetVersion.namespace_id,
             )
             .join(
                 models.ColumnSetMember,
@@ -265,21 +255,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 ),
                 models.GeoSetVersion.loc_id == locality.loc_id,
                 models.GeoSetVersion.layer_id.in_(available_layer_ids),
-            )
-            .join(
-                models.GeoSetMember,
-                models.GeoSetMember.set_version_id == models.GeoSetVersion.set_version_id,
-            )
-            .join(
-                models.Geography,
-                models.Geography.geo_id == models.GeoSetMember.geo_id,
-            )
-            .join(
-                models.Namespace,
-                models.Geography.namespace_id == models.Namespace.namespace_id,
-            )
-            .filter(
-                models.Namespace.path == namespace.path,
+                models.GeoSetVersion.namespace_id == namespace.namespace_id,
             )
             .first()
         )
@@ -417,30 +393,51 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
 
         columns = _view_columns(db, template_version_id)
 
-        geo_set_members = (
-            db.query(models.GeoSetMember.geo_id)
-            .filter(models.GeoSetMember.set_version_id.in_(all_set_version_ids))
-            .subquery()
-        )
+        # The stats table tracks CURRENT values, so it can only stand in for
+        # the as-of-valid_at scan when valid_at is effectively "now" (the
+        # normal case: clients stamp views at creation time). Older anchors
+        # get the full column_value scan, whose cost scales with database
+        # size.
+        if valid_at >= datetime.now(timezone.utc) - STATS_FRESHNESS_SLACK:
+            value_counts = (
+                db.query(
+                    models.ColumnValueCount.col_id,
+                    label("num_geos", func.sum(models.ColumnValueCount.count)),
+                )
+                .filter(
+                    models.ColumnValueCount.set_version_id.in_(all_set_version_ids),
+                    models.ColumnValueCount.col_id.in_(
+                        [col.col_id for col in columns.values()]
+                    ),
+                )
+                .group_by(models.ColumnValueCount.col_id)
+                .all()
+            )
+        else:
+            geo_set_members = (
+                db.query(models.GeoSetMember.geo_id)
+                .filter(models.GeoSetMember.set_version_id.in_(all_set_version_ids))
+                .subquery()
+            )
 
-        value_counts = (
-            db.query(
-                models.ColumnValue.col_id,
-                label("num_geos", func.count(models.ColumnValue.geo_id)),
+            value_counts = (
+                db.query(
+                    models.ColumnValue.col_id,
+                    label("num_geos", func.count(models.ColumnValue.geo_id)),
+                )
+                .join(geo_set_members, geo_set_members.c.geo_id == models.ColumnValue.geo_id)
+                .filter(
+                    models.ColumnValue.col_id.in_(bindparam("col_ids", expanding=True)),
+                    models.ColumnValue.valid_from <= valid_at,
+                    (
+                        (models.ColumnValue.valid_to.is_(None))
+                        | (models.ColumnValue.valid_to >= valid_at)
+                    ),
+                )
+                .params(col_ids=[col.col_id for col in columns.values()])
+                .group_by(models.ColumnValue.col_id)
+                .all()
             )
-            .join(geo_set_members, geo_set_members.c.geo_id == models.ColumnValue.geo_id)
-            .filter(
-                models.ColumnValue.col_id.in_(bindparam("col_ids", expanding=True)),
-                models.ColumnValue.valid_from <= valid_at,
-                (
-                    (models.ColumnValue.valid_to.is_(None))
-                    | (models.ColumnValue.valid_to >= valid_at)
-                ),
-            )
-            .params(col_ids=[col.col_id for col in columns.values()])
-            .group_by(models.ColumnValue.col_id)
-            .all()
-        )
         value_counts_by_col = {group.col_id: group.num_geos for group in value_counts}
 
         log.debug("VALUE COUNTS: %s", value_counts_by_col)

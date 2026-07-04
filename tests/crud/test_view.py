@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import networkx as nx
 import pytest
@@ -1346,3 +1346,105 @@ def test_view_create_cols_multiple_namespaces(db_with_meta, caplog):
     assert view.loc == loc
     assert view.layer == geo_layer
     assert view.template_version == view_template
+
+
+def test_view_create_historical_valid_at_uses_scan(db_with_meta, monkeypatch):
+    """A view anchored before its values existed must fail validation.
+
+    The stats table only knows CURRENT value coverage; a historical valid_at
+    must take the as-of column_value scan, which sees zero values at that
+    timestamp even though coverage is complete now. The freshness slack is
+    zeroed so a milliseconds-old anchor counts as historical.
+    """
+    import importlib
+
+    view_module = importlib.import_module("gerrydb_meta.crud.view")
+    monkeypatch.setattr(view_module, "STATS_FRESHNESS_SLACK", timedelta(0))
+    db, meta = db_with_meta
+    ns = make_atlantis_ns(db, meta)
+    geo_import, _ = crud.geo_import.create(db=db, obj_meta=meta, namespace=ns)
+    geo, _ = crud.geography.create_bulk(
+        db=db,
+        objs_in=[
+            schemas.GeographyCreate(path="hist_a", geography=None, internal_point=None),
+            schemas.GeographyCreate(path="hist_b", geography=None, internal_point=None),
+        ],
+        obj_meta=meta,
+        geo_import=geo_import,
+        namespace=ns,
+    )
+    geo_layer, _ = crud.geo_layer.create(
+        db=db,
+        obj_in=schemas.GeoLayerCreate(path="hist_blocks", description="test"),
+        obj_meta=meta,
+        namespace=ns,
+    )
+    loc, _ = crud.locality.create_bulk(
+        db=db,
+        objs_in=[schemas.LocalityCreate(canonical_path="hist_loc", name="Hist", aliases=None)],
+        obj_meta=meta,
+    )
+    crud.geo_layer.map_locality(
+        db=db, layer=geo_layer, locality=loc[0], geographies=[g[0] for g in geo], obj_meta=meta
+    )
+    col, _ = crud.column.create(
+        db=db,
+        obj_in=schemas.ColumnCreate(
+            canonical_path="hist_pop",
+            description="test",
+            kind=ColumnKind.COUNT,
+            type=ColumnType.INT,
+        ),
+        obj_meta=meta,
+        namespace=ns,
+    )
+    view_template, _ = crud.view_template.create(
+        db=db,
+        obj_in=schemas.ViewTemplateCreate(
+            path="hist_template", description="test", members=["hist_pop"]
+        ),
+        resolved_members=[col.canonical_ref],
+        obj_meta=meta,
+        namespace=ns,
+    )
+    before_values = datetime.now(timezone.utc)
+    crud.column.set_values(
+        db=db, col=col, values=[(geo[0][0], 1), (geo[1][0], 2)], obj_meta=meta
+    )
+
+    # Anchored now: the stats table validates coverage and the view creates.
+    view, _ = crud.view.create(
+        db=db,
+        obj_in=schemas.ViewCreate(
+            path="hist_now",
+            description="test",
+            template="hist_template",
+            locality="hist_loc",
+            layer="hist_blocks",
+        ),
+        obj_meta=meta,
+        namespace=ns,
+        template=view_template,
+        locality=loc[0],
+        layer=geo_layer,
+    )
+    assert view.num_geos == 2
+
+    # Anchored before the values existed: must fail via the as-of scan.
+    with pytest.raises(CreateValueError, match="Bad columns"):
+        crud.view.create(
+            db=db,
+            obj_in=schemas.ViewCreate(
+                path="hist_backdated",
+                description="test",
+                template="hist_template",
+                locality="hist_loc",
+                layer="hist_blocks",
+                valid_at=before_values,
+            ),
+            obj_meta=meta,
+            namespace=ns,
+            template=view_template,
+            locality=loc[0],
+            layer=geo_layer,
+        )
