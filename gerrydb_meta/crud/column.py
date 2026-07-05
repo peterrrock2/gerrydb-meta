@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Collection, Tuple
 
-from sqlalchemy import exc, insert, select, text, tuple_, update
+from sqlalchemy import exc, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
@@ -39,6 +39,9 @@ def increment_column_value_counts(db: Session, *, col_id: int, geo_ids: Collecti
             "WHERE m.geo_id = ANY(CAST(:geo_ids AS integer[])) "
             "AND sv.valid_to IS NULL "
             "GROUP BY m.set_version_id "
+            # Deterministic order: concurrent chunks of the same column upsert
+            # the same rows, and mismatched orders can deadlock.
+            "ORDER BY m.set_version_id "
             "ON CONFLICT (col_id, set_version_id) DO UPDATE "
             "SET count = column_value_count.count + EXCLUDED.count"
         ),
@@ -156,6 +159,8 @@ def apply_value_hash_deltas(
             f"INSERT INTO {models.SCHEMA}.column_value_count "
             "  (col_id, set_version_id, count, value_hash_hi, value_hash_lo) "
             "SELECT :col_id, agg.set_version_id, 0, agg.hi, agg.lo FROM agg "
+            # Deterministic order: see increment_column_value_counts.
+            "ORDER BY agg.set_version_id "
             "ON CONFLICT (col_id, set_version_id) DO UPDATE "
             "SET value_hash_hi = COALESCE(column_value_count.value_hash_hi, 0) # EXCLUDED.value_hash_hi, "
             "    value_hash_lo = COALESCE(column_value_count.value_hash_lo, 0) # EXCLUDED.value_hash_lo"
@@ -328,12 +333,11 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
         now = datetime.now(timezone.utc)
 
         # Validate column data.
-        rows_dict = {}
-        new_row_pairs = set()
+        values_by_gid: dict[int, Any] = {}
         validation_errors = []
         for geo, value in values:
             suffix = f"column value for geography {geo.full_path} found {type(value)}"
-            if geo.geo_id in rows_dict:
+            if geo.geo_id in values_by_gid:
                 raise ValueError(f"Duplicate geography path '{geo.path}' found.")
 
             if col.type == ColumnType.FLOAT and isinstance(value, int):
@@ -349,99 +353,87 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
             elif col.type == ColumnType.BOOL and not isinstance(value, bool):
                 validation_errors.append(f"Expected boolean {suffix}")
             else:
-                rows_dict[geo.geo_id] = {
-                    "col_id": col.col_id,
-                    "geo_id": geo.geo_id,
-                    "meta_id": obj_meta.meta_id,
-                    "valid_from": now,
-                    val_column: value,
-                }
-                new_row_pairs.add((geo.geo_id, value))
+                values_by_gid[geo.geo_id] = value
 
         if validation_errors:
             log.error(validation_errors)
             raise ColumnValueTypeError(errors=validation_errors)
 
-        # Add the new column values and invalidate the old ones where present.
-        geo_ids = [geo.geo_id for geo, _ in values]
-
-        # make sure partition exists for column
-        db.execute(create_column_value_partition_text(column_id=col.col_id))
-
-        old_values = {}
-        for item in (
-            db.query(models.ColumnValue)
-            .filter(
-                models.ColumnValue.col_id == col.col_id,
-                models.ColumnValue.geo_id.in_(geo_ids),
-                models.ColumnValue.valid_to.is_(None),
-            )
-            .all()
-        ):
-            if item.val_float is not None:
-                old_values[item.geo_id] = item.val_float
-            elif item.val_int is not None:
-                old_values[item.geo_id] = item.val_int
-            elif item.val_str is not None:
-                old_values[item.geo_id] = item.val_str
-            elif item.val_bool is not None:
-                old_values[item.geo_id] = item.val_bool
-            else:  # pragma: no cover
-                # TODO: If this ever happens, add something that pings an admin.
-                assert False, "Critical Error: No column value found."  # This should never happen
-
-        # A geography needs a new version if it has no current value or its
-        # current value differs; unchanged values are skipped. Partial
-        # overlaps (some geographies covered, some fresh) are fine.
-        old_row_pairs = set(old_values.items())
-        geo_ids_to_insert = {gid for gid, value in new_row_pairs - old_row_pairs}
-
-        # No values have changed, so we can skip the insert.
-        if geo_ids_to_insert == set():  # pragma: no cover
-            return
-
-        rows = [rows_dict[geo_id] for geo_id in geo_ids_to_insert]
-
-        with_tuples = (
-            db.query(
-                models.ColumnValue.col_id,
-                models.ColumnValue.geo_id,
-                models.ColumnValue.valid_from,
-            )
-            .filter(
-                models.ColumnValue.col_id == col.col_id,
-                models.ColumnValue.geo_id.in_(geo_ids_to_insert),
-                models.ColumnValue.valid_to.is_(None),
-            )
-            .all()
+        pg_array_type = {
+            "val_float": "float8[]",
+            "val_int": "bigint[]",
+            "val_str": "text[]",
+            "val_bool": "boolean[]",
+        }[val_column]
+        gids = list(values_by_gid)
+        params = {
+            "col_id": col.col_id,
+            "meta_id": obj_meta.meta_id,
+            "now": now,
+            "gids": gids,
+            "vals": [values_by_gid[g] for g in gids],
+        }
+        incoming_sub = (
+            "(SELECT unnest(CAST(:gids AS integer[])) AS geo_id, "
+            f"        unnest(CAST(:vals AS {pg_array_type})) AS val) i"
         )
 
         with db.begin(nested=True):
-            db.execute(insert(models.ColumnValue), rows)
-            # Optimization: most column values are only set once, so we don't
-            # need to invalidate old versions unless we previously detected them.
-            if with_tuples:
-                db.execute(
-                    update(models.ColumnValue)
-                    .where(
-                        tuple_(
-                            models.ColumnValue.col_id,
-                            models.ColumnValue.geo_id,
-                            models.ColumnValue.valid_from,
-                        ).in_(with_tuples)
-                    )
-                    .values(valid_to=now)
+            # Close current versions whose value actually changes. IS DISTINCT
+            # FROM preserves the no-op contract: identical re-uploads touch
+            # nothing. (Postgres treats NaN = NaN as equal here, so NaN
+            # re-uploads are no-ops too; pinned by a named regression test.)
+            changed_rows = db.execute(
+                text(
+                    f"UPDATE {models.SCHEMA}.column_value cv SET valid_to = :now "
+                    f"FROM {incoming_sub} "
+                    "WHERE cv.col_id = :col_id AND cv.geo_id = i.geo_id "
+                    "  AND cv.valid_to IS NULL "
+                    f"  AND cv.{val_column} IS DISTINCT FROM i.val "
+                    "RETURNING cv.geo_id, cv.val_float, cv.val_int, cv.val_str, cv.val_bool"
+                ),
+                params,
+            ).all()
+
+            # Insert a version wherever no current one remains: fresh
+            # geographies plus the rows just closed above. Unchanged values
+            # still hold a current row, so they are skipped.
+            inserted_gids = [
+                row.geo_id
+                for row in db.execute(
+                    text(
+                        f"INSERT INTO {models.SCHEMA}.column_value "
+                        f"    (col_id, geo_id, meta_id, valid_from, {val_column}) "
+                        "SELECT :col_id, i.geo_id, :meta_id, :now, i.val "
+                        f"FROM {incoming_sub} "
+                        "WHERE NOT EXISTS ("
+                        f"    SELECT 1 FROM {models.SCHEMA}.column_value cv "
+                        "     WHERE cv.col_id = :col_id AND cv.geo_id = i.geo_id "
+                        "       AND cv.valid_to IS NULL) "
+                        "RETURNING geo_id"
+                    ),
+                    params,
                 )
-            stale_geo_ids = {t.geo_id for t in with_tuples}
+            ]
+
+            old_values = {}
+            for row in changed_rows:
+                for old in (row.val_float, row.val_int, row.val_str, row.val_bool):
+                    if old is not None:
+                        old_values[row.geo_id] = old
+                        break
+                else:  # pragma: no cover
+                    raise RuntimeError("Current column_value row has no value set.")
+
             increment_column_value_counts(
                 db,
                 col_id=col.col_id,
-                geo_ids=[g for g in geo_ids_to_insert if g not in stale_geo_ids],
+                geo_ids=[g for g in inserted_gids if g not in old_values],
             )
             path_by_id = {geo.geo_id: geo.path for geo, _ in values}
             deltas = {}
-            for gid in geo_ids_to_insert:
-                hi, lo = pair_digest(path_by_id[gid], col.type, rows_dict[gid][val_column])
+            for gid in inserted_gids:
+                hi, lo = pair_digest(path_by_id[gid], col.type, values_by_gid[gid])
                 if gid in old_values:
                     ohi, olo = pair_digest(path_by_id[gid], col.type, old_values[gid])
                     hi, lo = hi ^ ohi, lo ^ olo

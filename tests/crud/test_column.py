@@ -725,3 +725,53 @@ def test_crud_column_patch_with_existing_aliases(db_with_meta, caplog):
         refs_lst.append(col_ref.path)
 
     assert set(refs_lst) == set(["foo-bar", "bar-baz", "geo_identifier"])
+
+
+def test_crud_column_set_values_nan_reupload_is_noop(db_with_meta):
+    """Regression: re-uploading NaN over a stored NaN creates no new version.
+
+    The set-based writer compares values with IS DISTINCT FROM, and Postgres
+    treats NaN = NaN as equal. The old Python-side comparison re-inserted a
+    version on every NaN upload because float('nan') != float('nan').
+    """
+    import math
+
+    db, meta = db_with_meta
+    ns = make_atlantis_ns(db, meta)
+    geo_import, _ = crud.geo_import.create(db=db, obj_meta=meta, namespace=ns)
+    geo, _ = crud.geography.create_bulk(
+        db=db,
+        objs_in=[
+            schemas.GeographyCreate(path="nan_atlantis", geography=None, internal_point=None),
+        ],
+        obj_meta=meta,
+        geo_import=geo_import,
+        namespace=ns,
+    )
+    col, _ = crud.column.create(
+        db=db,
+        obj_in=schemas.ColumnCreate(
+            canonical_path="nan_col",
+            description="float column holding NaN",
+            kind=ColumnKind.COUNT,
+            type=ColumnType.FLOAT,
+        ),
+        obj_meta=meta,
+        namespace=ns,
+    )
+
+    crud.column.set_values(
+        db=db, col=col, values=[(geo[0][0], float("nan"))], obj_meta=meta
+    )
+    crud.column.set_values(
+        db=db, col=col, values=[(geo[0][0], float("nan"))], obj_meta=meta
+    )
+
+    rows = (
+        db.query(models.ColumnValue)
+        .filter(models.ColumnValue.col_id == col.col_id)
+        .all()
+    )
+    assert len(rows) == 1
+    assert math.isnan(rows[0].val_float)
+    assert rows[0].valid_to is None
