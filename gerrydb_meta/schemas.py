@@ -594,36 +594,7 @@ class PlanMeta(PlanBase):
     complete: bool
 
     @classmethod
-    def from_attributes(cls, obj: models.Plan):  # pragma: no cover
-        return cls(
-            path=obj.path,
-            namespace=obj.namespace.path,
-            description=obj.description,
-            source_url=str(obj.source_url) if obj.source_url is not None else None,
-            districtr_id=obj.districtr_id,
-            daves_id=obj.daves_id,
-            locality=obj.set_version.loc,
-            layer=obj.set_version.layer,
-            meta=ObjectMeta.from_attributes(obj.meta),
-            created_at=obj.created_at,
-            num_districts=obj.num_districts,
-            complete=obj.complete,
-        )
-
-
-class Plan(PlanMeta):
-    """Rendered districting plan."""
-
-    assignments: dict[NamespacedGerryGeoPath, Optional[str]]
-
-    @classmethod
     def from_attributes(cls, obj: models.Plan):
-        # TODO: there's probably a performance bottleneck around the resolution
-        # of geography names for assignments with a lot of geographies.
-        base_geos = {member.geo.full_path: None for member in obj.set_version.members}
-        assignments = {
-            assignment.geo.full_path: assignment.assignment for assignment in obj.assignments
-        }
         return cls(
             path=obj.path,
             namespace=obj.namespace.path,
@@ -637,7 +608,38 @@ class Plan(PlanMeta):
             created_at=obj.created_at,
             num_districts=obj.num_districts,
             complete=obj.complete,
-            assignments={**base_geos, **assignments},
+        )
+
+
+class Plan(PlanMeta):
+    """Rendered districting plan."""
+
+    assignments: dict[NamespacedGerryGeoPath, Optional[str]]
+
+    @classmethod
+    def from_attributes_with_assignments(
+        cls, obj: models.Plan, assignments: dict[str, Optional[str]]
+    ):
+        """Builds the response from a prebuilt assignments dict.
+
+        The dict comes from two column projections (set members, assignment
+        rows); walking the ORM relationships instead loads every assignment
+        and member with its eager-joined geography, meta, and namespace.
+        """
+        return cls(
+            path=obj.path,
+            namespace=obj.namespace.path,
+            description=obj.description,
+            source_url=str(obj.source_url) if obj.source_url is not None else None,
+            districtr_id=obj.districtr_id,
+            daves_id=obj.daves_id,
+            locality=Locality.from_attributes(obj.set_version.loc),
+            layer=GeoLayer.from_attributes(obj.set_version.layer),
+            meta=ObjectMeta.from_attributes(obj.meta),
+            created_at=obj.created_at,
+            num_districts=obj.num_districts,
+            complete=obj.complete,
+            assignments=assignments,
         )
 
 

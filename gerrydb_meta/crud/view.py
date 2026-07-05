@@ -110,7 +110,6 @@ class ViewRenderContext:
 
     view: models.View
     columns: dict[str, models.DataColumn]
-    plans: list[models.Plan]
     plan_labels: list[str]
     # Lazily streamed (generators): row batches arrive as the GeoPackage
     # writer consumes them, bounding render memory.
@@ -988,7 +987,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         full_geo_query = f"SELECT path, geography, {quoted_aliases} FROM {render_table}"
         full_internal_point_query = f"SELECT path, internal_point FROM {render_table}"
 
-        plans, plan_labels, plan_assignments = self._plans(
+        plan_labels, plan_assignments = self._plans(
             db, view, view_set_version_ids=view_set_version_ids
         )
         geo_meta_ids, geo_meta = self._geo_meta(db, view, view_set_version_ids=view_set_version_ids)
@@ -999,7 +998,6 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         ret = ViewRenderContext(
             view=view,
             columns=columns,
-            plans=plans,
             plan_labels=plan_labels,
             plan_assignments=plan_assignments,
             graph_edges=self._graph_edges(db, view),
@@ -1060,58 +1058,65 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         db: Session,
         view: models.View,
         view_set_version_ids: list[int] | None = None,
-    ) -> tuple[list[models.Plan], list[str], Sequence | None]:
-        """Gets plans associated with a view.
+    ) -> tuple[list[str], Sequence | None]:
+        """Gets plan labels and assignments associated with a view.
 
         Returns:
-            (1) A list of plans compatible with the view.
-                (These plans also satisfy the view's public join constraint.)
-            (2) A list of column labels for the plans.
-            (3) A database iterator for the plan assignments, if any assignments
-                are available.
+            (1) A list of column labels for the view's visible plans (these
+                plans satisfy the view's public join constraint).
+            (2) A database iterator for the plan assignments, if any
+                assignments are available.
         """
         if view_set_version_ids is None:
             view_set_version_ids = self._view_set_version_ids(db, view.view_id)
 
-        # Get plans that existed when the view was created.
-        plans = (
-            db.query(models.Plan)
-            .filter(
+        # Plans that existed when the view was created, projected to the
+        # columns the labels need. Loading Plan entities here would drag every
+        # plan's relationship graph along; assignments stream separately.
+        plan_rows = db.execute(
+            select(
+                models.Plan.plan_id,
+                models.Plan.path,
+                models.Namespace.namespace_id,
+                models.Namespace.path.label("namespace_path"),
+                models.Namespace.public,
+            )
+            .join(models.Namespace, models.Namespace.namespace_id == models.Plan.namespace_id)
+            .where(
                 models.Plan.set_version_id.in_(view_set_version_ids),
                 models.Plan.created_at <= view.at,
             )
-            .all()
-        )
+        ).all()
         # Apply the public join constraint: don't leak any private plans.
         visible_plans = [
-            plan
-            for plan in plans
-            if (plan.namespace.public or plan.namespace.namespace_id == view.namespace.namespace_id)
+            row
+            for row in plan_rows
+            if (row.public or row.namespace_id == view.namespace.namespace_id)
         ]
 
         # Get plan assignments as a table.
         plan_labels = []
         if len(visible_plans) == 0:  # pragma: no cover
-            return [], [], None
+            return [], None
 
         # Determine the shortest unambiguous alias for each plan.
         namespaces_by_path = defaultdict(set)
-        for plan in visible_plans:
-            namespaces_by_path[plan.path].add(plan.namespace.path)
+        for row in visible_plans:
+            namespaces_by_path[row.path].add(row.namespace_path)
 
         # Generate query clauses for each plan.
         plan_subs = []
-        for plan in visible_plans:
+        for row in visible_plans:
             label = (
-                f"{plan.namespace.path}__{plan.path}"
-                if len(namespaces_by_path[plan.path]) > 1
-                else plan.path
+                f"{row.namespace_path}__{row.path}"
+                if len(namespaces_by_path[row.path]) > 1
+                else row.path
             )
             plan_labels.append(label)
             plan_subs.append(
                 select(models.PlanAssignment.geo_id, models.PlanAssignment.assignment)
                 .where(
-                    models.PlanAssignment.plan_id == plan.plan_id,
+                    models.PlanAssignment.plan_id == row.plan_id,
                 )
                 .subquery()
             )
@@ -1138,7 +1143,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
         plan_assignments = _stream_rows(db, plan_assignment_query)
 
-        return visible_plans, plan_labels, plan_assignments
+        return plan_labels, plan_assignments
 
     def _graph_edges(self, db: Session, view: models.View) -> Sequence | None:
         """Gets graph edges by path, if applicable."""

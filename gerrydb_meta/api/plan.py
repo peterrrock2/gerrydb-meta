@@ -3,7 +3,7 @@
 from http import HTTPStatus
 from typing import Callable
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Header, Response
 from sqlalchemy.orm import Session
 
 from gerrydb_meta import crud, models, schemas
@@ -11,13 +11,39 @@ from gerrydb_meta.api.base import (
     NamespacedObjectApi,
     add_etag,
     geo_set_from_paths,
-    geos_from_paths,
+    geo_refs_from_paths,
 )
 from gerrydb_meta.api.deps import can_read_localities, get_db, get_obj_meta, get_scopes
 from gerrydb_meta.scopes import ScopeManager
 
 
 class PlanApi(NamespacedObjectApi):
+    def _get(self, router: APIRouter) -> Callable:
+        @router.get(
+            "/{namespace}/{path:path}",
+            response_model=schemas.Plan,
+            name="Read Plan",
+        )
+        def get_route(
+            *,
+            response: Response,
+            namespace: str,
+            path: str,
+            db: Session = Depends(get_db),
+            scopes: ScopeManager = Depends(get_scopes),
+            if_none_match: str | None = Header(default=None),
+        ):
+            namespace_obj = self._namespace_with_read(db=db, scopes=scopes, path=namespace)
+            self._check_etag(db=db, namespace=namespace_obj, header=if_none_match)
+            etag = self.crud.etag(db, namespace_obj)
+            plan = self._obj(db=db, namespace=namespace_obj, path=path)
+            add_etag(response, etag)
+            return schemas.Plan.from_attributes_with_assignments(
+                plan, crud.plan.assignments_dict(db=db, plan=plan)
+            )
+
+        return get_route
+
     def _create(self, router: APIRouter) -> Callable:
         @router.post(
             "/{namespace}",
@@ -48,7 +74,7 @@ class PlanApi(NamespacedObjectApi):
             # Assemble geographies from assignment keys; verify that they exist
             # and are a subset of the geographies in the `GeoSetVersion`.
             plan_geo_paths = list(obj_in.assignments)
-            plan_geos = geos_from_paths(
+            plan_geos = geo_refs_from_paths(
                 paths=plan_geo_paths, namespace=namespace, db=db, scopes=scopes
             )
             plan_geo_assignments = dict(zip(plan_geos, obj_in.assignments.values()))
@@ -63,7 +89,9 @@ class PlanApi(NamespacedObjectApi):
                 namespace=plan_namespace_obj,
             )
             add_etag(response, etag)
-            return schemas.Plan.from_attributes(plan)
+            return schemas.Plan.from_attributes_with_assignments(
+                plan, crud.plan.assignments_dict(db=db, plan=plan)
+            )
 
         return create_route
 
@@ -74,4 +102,5 @@ router = PlanApi(
     create_schema=schemas.PlanCreate,
     obj_name_singular="Plan",
     obj_name_plural="Plans",
+    list_schema=schemas.PlanMeta,
 ).router()

@@ -134,8 +134,35 @@ class CRPlan(NamespacedCRBase[models.Plan, schemas.PlanCreate]):
             )
             etag = self._update_etag(db, namespace)
 
-        db.refresh(plan)
         return plan, etag
+
+    def assignments_dict(self, db: Session, *, plan: models.Plan) -> dict[str, str | None]:
+        """Full geography path -> assignment for a plan; unassigned members are None.
+
+        Two column projections instead of walking the ORM graph: a state-scale
+        plan has hundreds of thousands of assignment rows, and each ORM row
+        would drag eager-joined geography, meta, and namespace with it.
+        """
+        ns_path = db.scalar(
+            select(models.Namespace.path).where(
+                models.Namespace.namespace_id == plan.set_version.namespace_id
+            )
+        )
+        member_paths = db.scalars(
+            select(models.Geography.path).join(
+                models.GeoSetMember,
+                models.GeoSetMember.geo_id == models.Geography.geo_id,
+            ).where(models.GeoSetMember.set_version_id == plan.set_version_id)
+        )
+        assignment_rows = db.execute(
+            select(models.Geography.path, models.PlanAssignment.assignment).join(
+                models.PlanAssignment,
+                models.PlanAssignment.geo_id == models.Geography.geo_id,
+            ).where(models.PlanAssignment.plan_id == plan.plan_id)
+        )
+        result: dict[str, str | None] = {f"/{ns_path}/{path}": None for path in member_paths}
+        result.update((f"/{ns_path}/{path}", assignment) for path, assignment in assignment_rows)
+        return result
 
     def get(self, db: Session, *, path: str, namespace: models.Namespace) -> models.Plan | None:
         """Retrieves a districting plan by reference path.
