@@ -41,6 +41,18 @@ def set_column_values(
     col = crud.column.get(db, path=col_path, namespace=col_namespace_obj)
     if col is None:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Column not found.")
+    if col.namespace_id != col_namespace_obj.namespace_id:
+        # The path resolved through a cross-namespace reference. References
+        # are immutable aliases: writing through one would mutate the source
+        # column with only the referencing namespace's write scope.
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN,
+            detail=(
+                f"'{col_path}' is a reference to a column in namespace "
+                f"'{col.namespace.path}'; values cannot be written through a "
+                "reference. Upload under a different column name to diverge."
+            ),
+        )
 
     geos = geos_from_paths(
         paths=[val.path for val in values], namespace=namespace, db=db, scopes=scopes

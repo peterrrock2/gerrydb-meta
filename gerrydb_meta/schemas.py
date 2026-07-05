@@ -228,6 +228,40 @@ class Column(ColumnBase):
         )
 
 
+class ColumnPreflightCandidate(BaseModel):
+    """A column a client intends to upload, fingerprinted for duplicate checks."""
+
+    name: str
+    locality: str
+    layer: str
+    hash_hi: int
+    hash_lo: int
+
+
+class ColumnPreflightRequest(BaseModel):
+    candidates: list[ColumnPreflightCandidate]
+
+
+class ColumnDuplicateMatch(BaseModel):
+    """Where a candidate's content already lives, if anywhere."""
+
+    name: str
+    namespace: str | None = None
+    path: str | None = None
+
+
+class ColumnPreflightResponse(BaseModel):
+    results: list[ColumnDuplicateMatch]
+
+
+class ColumnReferenceCreate(BaseModel):
+    """A reference in the caller's namespace to an existing column."""
+
+    path: str
+    target_namespace: str
+    target_path: str
+
+
 class ColumnValue(BaseModel):
     """Value of a column for a geography."""
 

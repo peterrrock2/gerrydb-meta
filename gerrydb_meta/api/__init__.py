@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from gerrydb_meta import crud, schemas
 from gerrydb_meta.api import (
+    column_dedup,
     column_value,
     geo_import,
     geo_set,
@@ -31,6 +32,7 @@ api_router.include_router(
 )
 api_router.include_router(geo_import.router, prefix="/geo-imports", tags=["geo-imports"])
 api_router.include_router(column_value.router, prefix="/columns", tags=["columns"])
+api_router.include_router(column_dedup.router, prefix="/column-refs", tags=["columns"])
 api_router.include_router(geo_set.router, prefix="/layers", tags=["layers"])
 api_router.include_router(plan.router, prefix="/plans", tags=["plans"])
 api_router.include_router(view.router, prefix="/views", tags=["views"])

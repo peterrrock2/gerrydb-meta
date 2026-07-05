@@ -195,3 +195,38 @@ def test_api_column_value_set__update(ctx_public_namespace_read_write):
     assert put_again_response.status_code == HTTPStatus.NO_CONTENT, put_again_response.json()
 
     assert get_column_values(ctx, col_obj) == {"geo": 2}
+
+
+def test_api_column_value_set__through_reference_forbidden(
+    ctx_public_namespace_read_write,
+):
+    """Writing values through a cross-namespace reference is refused:
+    references are immutable aliases, and the write scope that was checked
+    belongs to the referencing namespace, not the column's owner."""
+    from gerrydb_meta import crud, schemas
+    from gerrydb_meta.enums import ScopeType
+    from tests.api.scopes import grant_namespaced_scope
+
+    ctx = ctx_public_namespace_read_write
+    col = create_column(ctx, "refcol")
+    create_geo(ctx, "geo1")
+
+    other_ns, _ = crud.namespace.create(
+        db=ctx.db,
+        obj_in=schemas.NamespaceCreate(
+            path="refns", description="test", public=True
+        ),
+        obj_meta=ctx.meta,
+    )
+    crud.column.create_reference(
+        ctx.db, path="refcol", namespace=other_ns, col=col, obj_meta=ctx.meta
+    )
+    grant_namespaced_scope(ctx.db, ctx.meta, other_ns, ScopeType.NAMESPACE_WRITE)
+    ctx.db.flush()
+
+    response = ctx.client.put(
+        f"{COLUMNS_ROOT}/refns/refcol",
+        json=[{"path": f"/{ctx.namespace.path}/geo1", "value": 1}],
+    )
+    assert response.status_code == HTTPStatus.FORBIDDEN, response.json()
+    assert "reference" in response.json()["detail"]

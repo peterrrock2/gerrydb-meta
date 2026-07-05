@@ -14,6 +14,7 @@ from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.enums import ColumnType
 from gerrydb_meta.exceptions import ColumnValueTypeError, CreateValueError
 from gerrydb_meta.utils import create_column_value_partition_text
+from gerrydb_meta.value_hash import pair_digest
 
 def increment_column_value_counts(db: Session, *, col_id: int, geo_ids: Collection[int]) -> None:
     """Bumps per-(column, set version) current-value counts after `geo_ids`
@@ -41,6 +42,47 @@ def increment_column_value_counts(db: Session, *, col_id: int, geo_ids: Collecti
             "SET count = column_value_count.count + EXCLUDED.count"
         ),
         {"col_id": col_id, "geo_ids": list(geo_ids)},
+    )
+
+
+def apply_value_hash_deltas(
+    db: Session, *, col_id: int, deltas: dict[int, tuple[int, int]]
+) -> None:
+    """XORs per-geography digest deltas into the fingerprints of every
+    current set version containing those geographies.
+
+    A delta is digest(new pair) for a first value, or
+    digest(old) XOR digest(new) for a change (the old pair XORs out).
+    """
+    if not deltas:
+        return
+    geo_ids = list(deltas)
+    db.execute(
+        text(
+            "WITH deltas AS ("
+            "  SELECT unnest(CAST(:gids AS integer[])) AS geo_id,"
+            "         unnest(CAST(:his AS bigint[])) AS hi,"
+            "         unnest(CAST(:los AS bigint[])) AS lo"
+            "), agg AS ("
+            "  SELECT m.set_version_id, bit_xor(d.hi) AS hi, bit_xor(d.lo) AS lo "
+            f" FROM deltas d JOIN {models.SCHEMA}.geo_set_member m USING (geo_id) "
+            f" JOIN {models.SCHEMA}.geo_set_version sv "
+            "    ON sv.set_version_id = m.set_version_id "
+            "  WHERE sv.valid_to IS NULL GROUP BY m.set_version_id"
+            ") "
+            f"INSERT INTO {models.SCHEMA}.column_value_count "
+            "  (col_id, set_version_id, count, value_hash_hi, value_hash_lo) "
+            "SELECT :col_id, agg.set_version_id, 0, agg.hi, agg.lo FROM agg "
+            "ON CONFLICT (col_id, set_version_id) DO UPDATE "
+            "SET value_hash_hi = COALESCE(column_value_count.value_hash_hi, 0) # EXCLUDED.value_hash_hi, "
+            "    value_hash_lo = COALESCE(column_value_count.value_hash_lo, 0) # EXCLUDED.value_hash_lo"
+        ),
+        {
+            "col_id": col_id,
+            "gids": geo_ids,
+            "his": [deltas[g][0] for g in geo_ids],
+            "los": [deltas[g][1] for g in geo_ids],
+        },
     )
 
 
@@ -243,7 +285,7 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
         # make sure partition exists for column
         db.execute(create_column_value_partition_text(column_id=col.col_id))
 
-        old_row_pairs = set()
+        old_values = {}
         for item in (
             db.query(models.ColumnValue)
             .filter(
@@ -254,23 +296,22 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
             .all()
         ):
             if item.val_float is not None:
-                old_row_pairs.add((item.geo_id, item.val_float))
+                old_values[item.geo_id] = item.val_float
             elif item.val_int is not None:
-                old_row_pairs.add((item.geo_id, item.val_int))
+                old_values[item.geo_id] = item.val_int
             elif item.val_str is not None:
-                old_row_pairs.add((item.geo_id, item.val_str))
+                old_values[item.geo_id] = item.val_str
             elif item.val_bool is not None:
-                old_row_pairs.add((item.geo_id, item.val_bool))
+                old_values[item.geo_id] = item.val_bool
             else:  # pragma: no cover
                 # TODO: If this ever happens, add something that pings an admin.
                 assert False, "Critical Error: No column value found."  # This should never happen
 
-        geo_ids_to_insert = set(rows_dict.keys())
-        if old_row_pairs != set():
-            assert len(old_row_pairs) == len(new_row_pairs)
-            geo_ids_to_insert = set()
-            for geo_id, value in new_row_pairs - old_row_pairs:
-                geo_ids_to_insert.add(geo_id)
+        # A geography needs a new version if it has no current value or its
+        # current value differs; unchanged values are skipped. Partial
+        # overlaps (some geographies covered, some fresh) are fine.
+        old_row_pairs = set(old_values.items())
+        geo_ids_to_insert = {gid for gid, value in new_row_pairs - old_row_pairs}
 
         # No values have changed, so we can skip the insert.
         if geo_ids_to_insert == set():  # pragma: no cover
@@ -314,6 +355,117 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
                 col_id=col.col_id,
                 geo_ids=[g for g in geo_ids_to_insert if g not in stale_geo_ids],
             )
+            path_by_id = {geo.geo_id: geo.path for geo, _ in values}
+            deltas = {}
+            for gid in geo_ids_to_insert:
+                hi, lo = pair_digest(
+                    path_by_id[gid], col.type, rows_dict[gid][val_column]
+                )
+                if gid in old_values:
+                    ohi, olo = pair_digest(path_by_id[gid], col.type, old_values[gid])
+                    hi, lo = hi ^ ohi, lo ^ olo
+                deltas[gid] = (hi, lo)
+            apply_value_hash_deltas(db, col_id=col.col_id, deltas=deltas)
+
+    def create_reference(
+        self,
+        db: Session,
+        *,
+        path: str,
+        namespace: models.Namespace,
+        col: models.DataColumn,
+        obj_meta: models.ObjectMeta,
+    ) -> Tuple[models.ColumnRef, uuid.UUID]:
+        """Creates a reference to `col` in `namespace` under `path`.
+
+        Cross-namespace references may only target columns in PUBLIC
+        namespaces: references resolve to the target's values at read time,
+        so a reference from a public namespace to a private column would
+        leak private data. Same-namespace references (plain aliases) are
+        unrestricted.
+        """
+        if col.namespace_id != namespace.namespace_id and not col.namespace.public:
+            raise CreateValueError(
+                "Cannot create a reference to a column in a private namespace."
+            )
+        canon_path = normalize_path(path)
+        existing = (
+            db.query(models.ColumnRef)
+            .filter_by(path=canon_path, namespace_id=namespace.namespace_id)
+            .first()
+        )
+        if existing is not None:
+            raise CreateValueError(
+                f"Reference or column '{canon_path}' already exists in namespace."
+            )
+        with db.begin(nested=True):
+            ref = models.ColumnRef(
+                path=canon_path,
+                col_id=col.col_id,
+                namespace_id=namespace.namespace_id,
+                meta_id=obj_meta.meta_id,
+            )
+            db.add(ref)
+            etag = self._update_etag(db, namespace)
+        db.flush()
+        return ref, etag
+
+    def find_duplicate(
+        self,
+        db: Session,
+        *,
+        name: str,
+        locality_path: str,
+        layer_path: str,
+        hash_hi: int,
+        hash_lo: int,
+        readable_namespace_ids: Collection[int],
+    ) -> models.DataColumn | None:
+        """Finds a readable column whose name/alias and content fingerprint
+        match a candidate upload over (locality, layer).
+
+        The fingerprint is compared against the stored hash for the current
+        set version of (locality, layer) in the matching column's own
+        namespace; name matching plus geo-set context makes accidental
+        collisions (e.g. degenerate all-zero columns) implausible.
+        """
+        canon = normalize_path(name)
+        refs = (
+            db.query(models.ColumnRef)
+            .filter(
+                models.ColumnRef.path == canon,
+                models.ColumnRef.namespace_id.in_(readable_namespace_ids),
+            )
+            .all()
+        )
+        seen_cols = set()
+        for ref in refs:
+            col = ref.column
+            if col.col_id in seen_cols:
+                continue
+            seen_cols.add(col.col_id)
+            row = db.execute(
+                text(
+                    f"SELECT c.value_hash_hi, c.value_hash_lo "
+                    f"FROM {models.SCHEMA}.column_value_count c "
+                    f"JOIN {models.SCHEMA}.geo_set_version sv "
+                    "   ON sv.set_version_id = c.set_version_id "
+                    f"JOIN {models.SCHEMA}.locality_ref lr ON lr.loc_id = sv.loc_id "
+                    f"JOIN {models.SCHEMA}.geo_layer gl ON gl.layer_id = sv.layer_id "
+                    "WHERE c.col_id = :col_id AND sv.valid_to IS NULL "
+                    "  AND lr.path = :loc AND gl.path = :layer "
+                    "  AND gl.namespace_id = :col_ns"
+                ),
+                {
+                    "col_id": col.col_id,
+                    "loc": normalize_path(locality_path),
+                    "layer": normalize_path(layer_path),
+                    "col_ns": col.namespace_id,
+                },
+            ).first()
+            if row is not None and row[0] == hash_hi and row[1] == hash_lo:
+                return col
+        return None
 
     def patch(
         self,

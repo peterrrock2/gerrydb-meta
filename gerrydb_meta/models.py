@@ -605,6 +605,11 @@ class ColumnValueCount(Base):
         Integer, ForeignKey("geo_set_version.set_version_id"), primary_key=True
     )
     count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # Order-independent content fingerprint of the current values over this
+    # set's members, as two signed 64-bit XOR accumulators (see value_hash.py).
+    # NULL means not yet computed; (0, 0) means computed over an empty set.
+    value_hash_hi: Mapped[int] = mapped_column(BigInteger, nullable=True)
+    value_hash_lo: Mapped[int] = mapped_column(BigInteger, nullable=True)
 
 
 class Plan(Base):
