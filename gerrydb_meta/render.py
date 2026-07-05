@@ -261,8 +261,7 @@ def _init_gpkg_graph_extension(conn: sqlite3.Connection, layer_name: str):
         CREATE TABLE gerrydb_graph_edge (
             path_1  TEXT NOT NULL REFERENCES "{layer_name}"(path),
             path_2  TEXT NOT NULL REFERENCES "{layer_name}"(path),
-            weights TEXT,
-            CONSTRAINT unique_edges UNIQUE (path_1, path_2)
+            weights TEXT
         )
         """
     )
@@ -578,12 +577,27 @@ def __insert_graph_edges(
     geo_layer_name: str,
 ):
     _init_gpkg_graph_extension(conn, geo_layer_name)
+    null_weights = json.dumps(None).decode("utf-8")
     conn.executemany(
         "INSERT INTO gerrydb_graph_edge (path_1, path_2, weights) VALUES (?, ?, ?)",
         (
-            (edge.path_1, edge.path_2, json.dumps(edge.weights).decode("utf-8"))
+            (
+                edge.path_1,
+                edge.path_2,
+                (
+                    null_weights
+                    if edge.weights is None
+                    else json.dumps(edge.weights).decode("utf-8")
+                ),
+            )
             for edge in context.graph_edges
         ),
+    )
+    # Build the uniqueness index after the bulk insert: incremental b-tree
+    # maintenance during the insert is what made this stage slow, and the
+    # rows are already unique upstream (Postgres primary key).
+    conn.execute(
+        "CREATE UNIQUE INDEX unique_edges ON gerrydb_graph_edge (path_1, path_2)"
     )
 
 
@@ -629,6 +643,12 @@ def view_to_gpkg(context: ViewRenderContext, db_config: str) -> tuple[uuid.UUID,
     )
 
     conn = sqlite3.connect(gpkg_path)
+    conn.executescript(
+        "PRAGMA journal_mode=OFF;"
+        "PRAGMA synchronous=OFF;"
+        "PRAGMA temp_store=MEMORY;"
+        "PRAGMA cache_size=-262144;"
+    )
 
     __validate_geo_and_internal_point_rows_count(
         conn,
@@ -710,6 +730,12 @@ def graph_to_gpkg(context: GraphRenderContext, db_config: str) -> tuple[uuid.UUI
     )
 
     conn = sqlite3.connect(gpkg_path)
+    conn.executescript(
+        "PRAGMA journal_mode=OFF;"
+        "PRAGMA synchronous=OFF;"
+        "PRAGMA temp_store=MEMORY;"
+        "PRAGMA cache_size=-262144;"
+    )
 
     __validate_geo_and_internal_point_rows_count(
         conn, geo_layer_name, internal_point_layer_name, type="graph"
