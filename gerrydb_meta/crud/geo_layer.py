@@ -10,7 +10,7 @@ from uvicorn.config import logger as log
 
 from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
-from gerrydb_meta.crud.column import hash_rebuild_select
+from gerrydb_meta.crud.column import seed_set_version_stats
 from gerrydb_meta.exceptions import CreateValueError
 
 
@@ -176,21 +176,12 @@ class CRGeoLayer(NamespacedCRBase[models.GeoLayer, schemas.GeoLayerCreate]):
                 ],
             )
 
-            # Seed current-value counts AND fingerprints for the new set
-            # version. Bulk loads map before values (normally empty here), but
-            # if the mapped geographies already have values (re-map, fork
-            # target) the hash must be seeded from scratch: a count with a NULL
-            # hash would let a later partial write XOR its delta onto 0,
-            # yielding a hash of only the touched geographies that never
-            # self-heals.
-            db.execute(
-                text(
-                    f"INSERT INTO {models.SCHEMA}.column_value_count "
-                    "(col_id, set_version_id, count, value_hash_hi, value_hash_lo) "
-                    + hash_rebuild_select("m.set_version_id = :set_version_id")
-                ),
-                {"set_version_id": set_version.set_version_id},
-            )
+            # Seed current-value counts AND fingerprints for the new set version. Bulk loads map
+            # before values (normally empty here), but if the mapped geographies already have
+            # values (re-map, fork target) the hash must be seeded from scratch: a count with a NULL
+            # hash would let a later partial write XOR its delta onto 0, yielding a hash of only
+            # the touched geographies that never self-heals.
+            seed_set_version_stats(db, set_version_id=set_version.set_version_id)
 
     def get_set_by_locality(
         self,

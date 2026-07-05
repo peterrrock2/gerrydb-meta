@@ -763,7 +763,7 @@ def bulk_user_create(roster_path: Path, keys_path: Path, creator_email: str):
 
         meta_obj = obj_meta.create(
             db=admin.session,
-            obj_in=ObjectMetaCreate(notes=f"Creating users with API keys."),
+            obj_in=ObjectMetaCreate(notes="Creating users with API keys."),
             user=creator,
         )
 
@@ -881,8 +881,10 @@ def stats_revalidate(fix: bool):
     """
     from sqlalchemy import text
 
-    drift_sql = text(
-        """
+    # One statement per column: the literal col_id plan-time-prunes the scan
+    # to that column's partition. An un-scoped fold over all columns probes
+    # every partition per member row and its cost tracks total database size.
+    drift_sql_template = """
         WITH actual AS (
             SELECT cv.col_id, m.set_version_id, COUNT(*) AS n
             FROM gerrydb.column_value cv
@@ -890,6 +892,7 @@ def stats_revalidate(fix: bool):
             JOIN gerrydb.geo_set_version sv
                 ON sv.set_version_id = m.set_version_id
             WHERE cv.valid_to IS NULL AND sv.valid_to IS NULL
+                AND cv.col_id = {col_id}
             GROUP BY cv.col_id, m.set_version_id
         ),
         stored AS (
@@ -897,7 +900,7 @@ def stats_revalidate(fix: bool):
             FROM gerrydb.column_value_count c
             JOIN gerrydb.geo_set_version sv
                 ON sv.set_version_id = c.set_version_id
-            WHERE sv.valid_to IS NULL
+            WHERE sv.valid_to IS NULL AND c.col_id = {col_id}
         )
         SELECT
             COALESCE(a.col_id, s.col_id) AS col_id,
@@ -908,11 +911,20 @@ def stats_revalidate(fix: bool):
         FULL OUTER JOIN stored s
             ON s.col_id = a.col_id AND s.set_version_id = a.set_version_id
         WHERE COALESCE(s.count, -1) <> COALESCE(a.n, -1)
-        ORDER BY 1, 2
         """
-    )
     with admin_context() as admin:
-        rows = admin.session.execute(drift_sql).all()
+        col_ids = [
+            row[0]
+            for row in admin.session.execute(
+                text('SELECT col_id FROM gerrydb."column" ORDER BY col_id')
+            )
+        ]
+        rows = []
+        for col_id in col_ids:
+            rows.extend(
+                admin.session.execute(text(drift_sql_template.format(col_id=int(col_id)))).all()
+            )
+        rows.sort(key=lambda r: (r[0], r[1]))
         if not rows:
             print("column_value_count is consistent with column_value.")
             return
@@ -933,17 +945,23 @@ def stats_revalidate(fix: bool):
                     """
                 )
             )
-            admin.session.execute(
-                text(
-                    "INSERT INTO gerrydb.column_value_count "
-                    "(col_id, set_version_id, count, value_hash_hi, value_hash_lo) "
-                    + hash_rebuild_select(
-                        "m.set_version_id IN ("
-                        "SELECT set_version_id FROM gerrydb.geo_set_version "
-                        "WHERE valid_to IS NULL)"
+            # Same per-column scoping as detection; each statement reads one partition once, so
+            # the rebuild is a single sequential pass over the value heap instead of an
+            # all-partition join explosion.
+            for i, col_id in enumerate(col_ids, 1):
+                admin.session.execute(
+                    text(
+                        "INSERT INTO gerrydb.column_value_count "
+                        "(col_id, set_version_id, count, value_hash_hi, value_hash_lo) "
+                        + hash_rebuild_select(
+                            f"cv.col_id = {int(col_id)} AND m.set_version_id IN ("
+                            "SELECT set_version_id FROM gerrydb.geo_set_version "
+                            "WHERE valid_to IS NULL)"
+                        )
                     )
                 )
-            )
+                if i % 100 == 0:
+                    print(f"rebuilt {i}/{len(col_ids)} columns")
             admin.session.commit()
             print("Rebuilt counts and fingerprints for current set versions.")
 

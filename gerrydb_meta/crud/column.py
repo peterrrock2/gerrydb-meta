@@ -16,6 +16,7 @@ from gerrydb_meta.exceptions import ColumnValueTypeError, CreateValueError
 from gerrydb_meta.utils import create_column_value_partition_text
 from gerrydb_meta.value_hash import pair_digest
 
+
 def increment_column_value_counts(db: Session, *, col_id: int, geo_ids: Collection[int]) -> None:
     """Bumps per-(column, set version) current-value counts after `geo_ids`
     gain their first current value for `col_id`.
@@ -81,14 +82,60 @@ def hash_rebuild_select(where: str) -> str:
     return _HASH_REBUILD_SELECT.format(schema=models.SCHEMA, where=where)
 
 
+_STATS_SEED_BATCH = 50  # literal col_id branches per INSERT statement
+
+
+def seed_set_version_stats(db: Session, *, set_version_id: int) -> None:
+    """Seeds (count, fingerprint) stats rows for one set version.
+
+    The fold runs as UNION ALL branches with literal col_ids (batched) plus a redundant member
+    geo_id band: each branch plan-time-prunes to one column_value partition and band-scans it. A
+    single un-branched fold has no col_id qual, so the planner touches every partition per member
+    row and cost tracks total database size, not the set being seeded.
+    """
+    band = db.execute(
+        text(
+            f"SELECT min(geo_id) AS lo, max(geo_id) AS hi "
+            f"FROM {models.SCHEMA}.geo_set_member WHERE set_version_id = :set_version_id"
+        ),
+        {"set_version_id": set_version_id},
+    ).one()
+    if band.lo is None:
+        return
+    col_ids = [
+        row[0]
+        for row in db.execute(text(f'SELECT col_id FROM {models.SCHEMA}."column" ORDER BY col_id'))
+    ]
+    # Serial on purpose: each branch is a small clustered band scan, and a Gather node per branch
+    # exhausts dynamic shared memory segments long before parallelism could pay for itself.
+    db.execute(text("SET LOCAL max_parallel_workers_per_gather = 0"))
+    params = {"set_version_id": set_version_id, "band_lo": band.lo, "band_hi": band.hi}
+    for start in range(0, len(col_ids), _STATS_SEED_BATCH):
+        branches = " UNION ALL ".join(
+            hash_rebuild_select(
+                f"cv.col_id = {int(col_id)} "
+                "AND cv.geo_id BETWEEN :band_lo AND :band_hi "
+                "AND m.set_version_id = :set_version_id"
+            )
+            for col_id in col_ids[start : start + _STATS_SEED_BATCH]
+        )
+        db.execute(
+            text(
+                f"INSERT INTO {models.SCHEMA}.column_value_count "
+                "(col_id, set_version_id, count, value_hash_hi, value_hash_lo) " + branches
+            ),
+            params,
+        )
+
+
 def apply_value_hash_deltas(
     db: Session, *, col_id: int, deltas: dict[int, tuple[int, int]]
 ) -> None:
-    """XORs per-geography digest deltas into the fingerprints of every
-    current set version containing those geographies.
+    """XORs per-geography digest deltas into the fingerprints of every current set version
+    containing those geographies.
 
-    A delta is digest(new pair) for a first value, or
-    digest(old) XOR digest(new) for a change (the old pair XORs out).
+    A delta is digest(new pair) for a first value, or digest(old) XOR digest(new) for a change
+    (the old pair XORs out).
     """
     if not deltas:
         return
@@ -394,9 +441,7 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
             path_by_id = {geo.geo_id: geo.path for geo, _ in values}
             deltas = {}
             for gid in geo_ids_to_insert:
-                hi, lo = pair_digest(
-                    path_by_id[gid], col.type, rows_dict[gid][val_column]
-                )
+                hi, lo = pair_digest(path_by_id[gid], col.type, rows_dict[gid][val_column])
                 if gid in old_values:
                     ohi, olo = pair_digest(path_by_id[gid], col.type, old_values[gid])
                     hi, lo = hi ^ ohi, lo ^ olo
@@ -421,9 +466,7 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
         unrestricted.
         """
         if col.namespace_id != namespace.namespace_id and not col.namespace.public:
-            raise CreateValueError(
-                "Cannot create a reference to a column in a private namespace."
-            )
+            raise CreateValueError("Cannot create a reference to a column in a private namespace.")
         canon_path = normalize_path(path)
         existing = (
             db.query(models.ColumnRef)
