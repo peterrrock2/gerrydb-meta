@@ -14,6 +14,7 @@ from google.api_core.exceptions import GoogleAPIError
 from google.auth.exceptions import GoogleAuthError
 from google.cloud import storage
 from google.oauth2.service_account import Credentials
+from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
 
@@ -276,10 +277,21 @@ def render_graph(
     log.debug("BEFORE GRAPH RENDER")
     start = time.perf_counter()
     render_ctx = crud.graph.render(db=db, graph=graph_obj)
-    log.debug("RENDER CTX %s", render_ctx)
+    # ogr2ogr connects separately: the materialized render table must be
+    # committed before it runs.
+    db.commit()
     log.debug("Time to render graph: %s", time.perf_counter() - start)
     start = time.perf_counter()
-    render_uuid, gpkg_path = graph_to_gpkg(context=render_ctx, db_config=db_config)
+    try:
+        render_uuid, gpkg_path = graph_to_gpkg(context=render_ctx, db_config=db_config)
+    finally:
+        # The GeoPackage owns the data now. If the drop is skipped (e.g. the
+        # process dies mid-render), `admin.py render:sweep` collects orphans.
+        try:
+            db.execute(sql_text(f"DROP TABLE IF EXISTS {render_ctx.render_table}"))
+            db.commit()
+        except Exception:
+            log.exception("Failed to drop render table %s.", render_ctx.render_table)
     log.debug("Time to write GPKG: %s", time.perf_counter() - start)
     log.debug("Created GPKG %s", gpkg_path)
 

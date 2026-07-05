@@ -1,5 +1,6 @@
 """CRUD operations and transformations for districting plans."""
 
+import json
 import re
 import uuid
 from dataclasses import dataclass
@@ -10,16 +11,18 @@ from typing import Tuple
 from sqlalchemy import (
     Sequence,
     exc,
-    insert,
+    func,
     literal_column,
     or_,
     select,
+    text,
 )
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
 
 from gerrydb_meta import models, schemas
+from gerrydb_meta.utils import copy_rows
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.exceptions import CreateValueError
 
@@ -37,6 +40,11 @@ class GraphRenderContext:
     # Bulk queries for `ogr2ogr`.
     geo_query: str
     internal_point_query: str
+
+    # The materialized table backing this render (dropped by the API caller
+    # after ogr2ogr; `admin.py render:sweep` collects orphans).
+    render_id: uuid.UUID
+    render_table: str
 
     def __repr__(self):  # pragma: no cover
         return f"GraphRenderContext(graph={self.graph})"
@@ -112,17 +120,19 @@ class CRGraph(NamespacedCRBase[models.Graph, schemas.GraphCreate]):
                 )
 
             db.refresh(graph)
-            db.execute(
-                insert(models.GraphEdge),
-                [
-                    {
-                        "graph_id": graph.graph_id,
-                        "geo_id_1": edge_geos[geo_path_1].geo_id,
-                        "geo_id_2": edge_geos[geo_path_2].geo_id,
-                        "weights": weights,
-                    }
+            copy_rows(
+                db,
+                table=f"{models.SCHEMA}.graph_edge",
+                columns=("graph_id", "geo_id_1", "geo_id_2", "weights"),
+                rows=(
+                    (
+                        graph.graph_id,
+                        edge_geos[geo_path_1].geo_id,
+                        edge_geos[geo_path_2].geo_id,
+                        None if weights is None else json.dumps(weights),
+                    )
                     for geo_path_1, geo_path_2, weights in obj_in.edges
-                ],
+                ),
             )
             etag = self._update_etag(db, namespace)
 
@@ -213,135 +223,110 @@ class CRGraph(NamespacedCRBase[models.Graph, schemas.GraphCreate]):
 
         return geo_meta_ids, distinct_meta
 
-    def _geo_valid_dates(self, db: Session, graph: models.Graph) -> dict[str, datetime]:
-        """Gets the valid dates for each geometry.
-
-        Returns:
-            A dictionary mapping geometry IDs to valid dates.
-        """
-
-        query = (
-            select(models.Geography.path, models.GeoVersion.valid_from)
-            .join(
-                models.GeoSetMember,
-                models.Geography.geo_id == models.GeoSetMember.geo_id,
-            )
-            .join(models.GeoVersion, models.Geography.geo_id == models.GeoVersion.geo_id)
-            .where(
-                models.GeoSetMember.set_version_id == graph.set_version_id,
-                # Match graph render's as-of semantics (valid at graph creation).
-                models.GeoVersion.valid_from <= graph.created_at,
-                or_(
-                    models.GeoVersion.valid_to.is_(None),
-                    models.GeoVersion.valid_to >= graph.created_at,
-                ),
-            )
-            # Ascending order + dict overwrite keeps the latest matching version per geo.
-            .order_by(models.GeoVersion.valid_from)
-        )
-
-        result = db.execute(query)
-
-        return {row.path: row.valid_from for row in result}
-
     def render(self, db: Session, graph: models.Graph) -> GraphRenderContext:
-        timestamp_clauses = [
-            models.GeoVersion.valid_from <= graph.created_at,
-            or_(
-                models.GeoVersion.valid_to.is_(None),
-                models.GeoVersion.valid_to >= graph.created_at,
-            ),
-        ]
+        """Builds the ogr2ogr context for a graph render.
 
+        Materializes one UNLOGGED table with the current-as-of-creation
+        geometry, internal point, and version date per member geography.
+        The old shape ran three full member scans (a DISTINCT over raw
+        geometry bytes, an internal-point pass, and a valid-dates pass);
+        the window pick replaces the blob DISTINCT outright.
+        """
         members_sub = (
             select(models.GeoSetMember.geo_id)
             .filter(models.GeoSetMember.set_version_id == graph.set_version_id)
             .subquery("members_sub")
         )
 
-        geo_sub = (
+        current_geo_version_sub = (
             select(
-                models.Geography.geo_id,
-                models.Geography.path,
+                models.GeoVersion.geo_id,
+                models.GeoVersion.geo_bin_id,
+                models.GeoVersion.internal_point,
+                models.GeoVersion.valid_from,
+                func.row_number()
+                .over(
+                    partition_by=models.GeoVersion.geo_id,
+                    order_by=models.GeoVersion.valid_from.desc(),
+                )
+                .label("row_num"),
             )
+            .where(models.GeoVersion.geo_id.in_(select(members_sub.c.geo_id)))
             .where(
-                models.Geography.namespace_id == graph.namespace_id,
+                # As-of-creation semantics: a geo patched after graph creation
+                # must keep resolving the version valid when the graph was made.
+                models.GeoVersion.valid_from <= graph.created_at,
+                or_(
+                    models.GeoVersion.valid_to.is_(None),
+                    models.GeoVersion.valid_to >= graph.created_at,
+                ),
             )
-            .subquery("geo_sub")
+            .subquery("current_geo_version_sub")
         )
 
-        geo_query = (
+        pivot_query = (
             select(
-                geo_sub.c.path,
+                models.Geography.path,
                 models.GeoBin.geography,
-            )
-            .select_from(models.GeoVersion)
-            .join(members_sub, members_sub.c.geo_id == models.GeoVersion.geo_id)
-            .join(geo_sub, geo_sub.c.geo_id == models.GeoVersion.geo_id)
-            .join(models.GeoBin, models.GeoVersion.geo_bin_id == models.GeoBin.geo_bin_id)
-        )
-
-        geo_query = geo_query.distinct().where(*timestamp_clauses)
-
-        internal_point_query = (
-            select(
-                geo_sub.c.path,
                 # Emit NULL for empty points: GPKG POINT layers and ogr2ogr
                 # reprojection both fail on POINT EMPTY. literal_column (not a
                 # typed CASE) so GeoAlchemy2 does not wrap it in ST_AsBinary.
                 literal_column(
-                    "(CASE WHEN ST_IsEmpty(gerrydb.geo_version.internal_point::geometry) "
-                    "THEN NULL ELSE gerrydb.geo_version.internal_point END)"
+                    "(CASE WHEN ST_IsEmpty(current_geo_version_sub.internal_point::geometry) "
+                    "THEN NULL ELSE current_geo_version_sub.internal_point END)"
                     "::geometry(Point, 4269)"  # explicit typmod so ogr2ogr keeps the SRS
                 ).label("internal_point"),
+                current_geo_version_sub.c.valid_from,
             )
-            .select_from(models.GeoVersion)
-            .join(members_sub, members_sub.c.geo_id == models.GeoVersion.geo_id)
-            .join(geo_sub, geo_sub.c.geo_id == models.GeoVersion.geo_id)
-            .where(*timestamp_clauses)
+            .select_from(models.Geography)
+            .join(
+                current_geo_version_sub,
+                (models.Geography.geo_id == current_geo_version_sub.c.geo_id)
+                & (current_geo_version_sub.c.row_num == 1),
+            )
+            .join(
+                models.GeoBin,
+                current_geo_version_sub.c.geo_bin_id == models.GeoBin.geo_bin_id,
+            )
+            .where(models.Geography.namespace_id == graph.namespace_id)
         )
+
+        render_id = uuid.uuid4()
+        render_table = f"{models.SCHEMA}.render_{render_id.hex}"
+        full_pivot_query = re.sub(
+            _ST_ASBINARY_REGEX,
+            r"\1",
+            str(
+                pivot_query.compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            ),
+        )
+        # Render-sized memory for this statement only; the global work_mem is
+        # kept small so concurrent users cannot OOM the container.
+        db.execute(text("SET LOCAL work_mem = '256MB'"))
+        # Created ON the session: any other connection would deadlock against
+        # locks this session already holds. The caller must COMMIT before
+        # running ogr2ogr, which connects separately.
+        db.execute(text(f"CREATE UNLOGGED TABLE {render_table} AS {full_pivot_query}"))
 
         geo_meta_ids, geo_meta = self._geo_meta(db, graph)
-        geo_valid_from_dates = self._geo_valid_dates(db, graph)
-
-        # Query generation: substitute in literals and remove the
-        # ST_AsBinary() calls added by GeoAlchemy2.
-        full_geo_query = re.sub(
-            _ST_ASBINARY_REGEX,
-            r"\1",
-            str(
-                geo_query.compile(
-                    dialect=postgresql.dialect(),
-                    compile_kwargs={"literal_binds": True},
-                )
-            ),
+        geo_valid_from_dates = dict(
+            db.execute(text(f"SELECT path, valid_from FROM {render_table}")).all()
         )
 
-        log.debug("The new geo query is %s", full_geo_query)
-
-        full_internal_point_query = re.sub(
-            _ST_ASBINARY_REGEX,
-            r"\1",
-            str(
-                internal_point_query.compile(
-                    dialect=postgresql.dialect(),
-                    compile_kwargs={"literal_binds": True},
-                )
-            ),
-        )
-
-        log.debug("The new internal point query is %s", full_internal_point_query)
-        ret = GraphRenderContext(
+        return GraphRenderContext(
             graph=graph,
             graph_edges=self._graph_edges(db, graph),
             geo_meta=geo_meta,
             geo_meta_ids=geo_meta_ids,
             geo_valid_from_dates=geo_valid_from_dates,
-            geo_query=full_geo_query,
-            internal_point_query=full_internal_point_query,
+            geo_query=f"SELECT path, geography FROM {render_table}",
+            internal_point_query=f"SELECT path, internal_point FROM {render_table}",
+            render_id=render_id,
+            render_table=render_table,
         )
-
-        return ret
 
     def _create_render(
         self,

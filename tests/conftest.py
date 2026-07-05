@@ -145,3 +145,22 @@ def ia_dataframe():
     """`GeoDataFrame` of Iowa counties."""
     shp_path = Path(__file__).resolve().parent / "fixtures" / "tl_2020_19_county20.zip"
     return gpd.read_file(shp_path).set_index("GEOID20")
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "commits_state: test persists rows past its transaction (e.g. render "
+        "routes commit mid-request so ogr2ogr can see the materialized table); "
+        "runs after tests that assume a pristine schema.",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    # The db fixture rolls each test back, but committing tests leak rows into
+    # the session-scoped schema. Push them to the end so they cannot poison
+    # tests that assume a pristine schema.
+    tail = [item for item in items if item.get_closest_marker("commits_state")]
+    if tail:
+        head = [item for item in items if not item.get_closest_marker("commits_state")]
+        items[:] = head + tail

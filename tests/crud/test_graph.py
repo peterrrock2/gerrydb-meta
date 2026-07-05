@@ -420,7 +420,7 @@ def test_crud_graph_get(db_with_meta):
 
 
 def test_crud_graph_geo_valid_dates_as_of_creation(db_with_meta):
-    """Regression: _geo_valid_dates resolves versions as of graph creation.
+    """Regression: graph renders resolve versions as of graph creation.
 
     The unfiltered query returned every version of every member geo, so a geo
     patched after graph creation leaked its new valid_from into graph renders.
@@ -482,7 +482,14 @@ def test_crud_graph_geo_valid_dates_as_of_creation(db_with_meta):
         namespace=ns,
     )
 
-    original_dates = crud.graph._geo_valid_dates(db, created_graph)
+    from sqlalchemy import text as sql_text
+
+    def rendered_valid_dates():
+        ctx = crud.graph.render(db, created_graph)
+        db.execute(sql_text(f"DROP TABLE IF EXISTS {ctx.render_table}"))
+        return ctx.geo_valid_from_dates
+
+    original_dates = rendered_valid_dates()
     assert set(original_dates) == {"central_atlantis", "western_atlantis"}
 
     # Patch one geo after graph creation: a newer version now exists, but the
@@ -500,4 +507,4 @@ def test_crud_graph_geo_valid_dates_as_of_creation(db_with_meta):
         namespace=ns,
     )
 
-    assert crud.graph._geo_valid_dates(db, created_graph) == original_dates
+    assert rendered_valid_dates() == original_dates

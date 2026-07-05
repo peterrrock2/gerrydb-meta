@@ -211,6 +211,7 @@ def test_good_graph_create_get(ctx_no_scopes, me_2010_gdf, me_2010_nx_graph, cap
     )
 
 
+@pytest.mark.commits_state
 def test_graph_render(ctx_no_scopes, me_2010_gdf, me_2010_nx_graph, caplog):
     db = ctx_no_scopes.db
     user = ctx_no_scopes.admin_user

@@ -747,6 +747,9 @@ def test_good_render_graph(db, me_2010_gdf, me_2010_nx_graph, ia_dataframe, capl
     db.flush()
 
     graph_render_ctx = crud.graph.render(db=db, graph=graph)
+    # ogr2ogr connects separately; the materialized render table must be
+    # committed before it runs.
+    db.commit()
 
     _, path = graph_to_gpkg(
         graph_render_ctx,
@@ -906,6 +909,9 @@ def test_good_render_graph_extra_geos(db, me_2010_gdf, me_2010_nx_graph, ia_data
     db.flush()
 
     graph_render_ctx = crud.graph.render(db=db, graph=graph)
+    # ogr2ogr connects separately; the materialized render table must be
+    # committed before it runs.
+    db.commit()
 
     _, path = graph_to_gpkg(
         graph_render_ctx,
@@ -1044,6 +1050,9 @@ def test_good_render_graph_new_projection(db, me_2010_gdf, me_2010_nx_graph, cap
     db.flush()
 
     graph_render_ctx = crud.graph.render(db=db, graph=graph)
+    # ogr2ogr connects separately; the materialized render table must be
+    # committed before it runs.
+    db.commit()
 
     _, path = graph_to_gpkg(
         graph_render_ctx,
