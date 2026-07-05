@@ -1,6 +1,6 @@
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 from alembic import context
 from gerrydb_meta.models import Base
@@ -63,6 +63,11 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        # Historical migrations emit some unqualified references (e.g.
+        # REFERENCES graph); they predate schema-qualified discipline and
+        # only resolve with gerrydb on the search path.
+        connection.execute(text("SET search_path TO public, gerrydb"))
+        connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
