@@ -145,3 +145,35 @@ def test_api_column_create_patch__private_namespace(
         json={"aliases": ["another_alias"]},
     )
     assert patch_response.status_code == HTTPStatus.NOT_FOUND, patch_response.json()
+
+
+def test_api_column_patch__through_reference_forbidden(ctx_public_namespace_read_write):
+    """Aliases cannot be injected into a column's owner namespace by
+    PATCHing through a cross-namespace reference."""
+    from http import HTTPStatus
+
+    from gerrydb_meta import crud, schemas
+    from gerrydb_meta.enums import ScopeType
+    from tests.api import create_column
+    from tests.api.scopes import grant_namespaced_scope
+
+    ctx = ctx_public_namespace_read_write
+    col = create_column(ctx, "patchcol")
+
+    other_ns, _ = crud.namespace.create(
+        db=ctx.db,
+        obj_in=schemas.NamespaceCreate(path="patchrefns", description="t", public=True),
+        obj_meta=ctx.meta,
+    )
+    crud.column.create_reference(
+        ctx.db, path="patchcol", namespace=other_ns, col=col, obj_meta=ctx.meta
+    )
+    grant_namespaced_scope(ctx.db, ctx.meta, other_ns, ScopeType.NAMESPACE_WRITE)
+    ctx.db.flush()
+
+    response = ctx.client.patch(
+        "/api/v1/columns/patchrefns/patchcol",
+        json={"aliases": ["sneaky_alias"]},
+    )
+    assert response.status_code == HTTPStatus.FORBIDDEN, response.json()
+    assert "reference" in response.json()["detail"]

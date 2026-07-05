@@ -148,3 +148,75 @@ def test_reference_to_private_namespace_rejected(db_with_meta):
         crud.column.create_reference(
             db, path="stolen", namespace=other, col=col, obj_meta=meta
         )
+
+
+def test_map_locality_seeds_correct_hash_for_prevalued_geos(db_with_meta):
+    """F1 regression: mapping already-valued geographies into a NEW set
+    version seeds the full-column fingerprint, not NULL (which a later
+    partial write would corrupt). Covers all four stored value types."""
+    from gerrydb_meta.value_hash import pair_digest, xor_fold
+
+    db, meta = db_with_meta
+    ns, _ = crud.namespace.create(
+        db=db,
+        obj_in=schemas.NamespaceCreate(path="f1ns", description="t", public=True),
+        obj_meta=meta,
+    )
+    geo_import, _ = crud.geo_import.create(db=db, obj_meta=meta, namespace=ns)
+    geos, _ = crud.geography.create_bulk(
+        db=db,
+        objs_in=[
+            schemas.GeographyCreate(path=f"g{i}", geography=None, internal_point=None)
+            for i in range(4)
+        ],
+        obj_meta=meta,
+        geo_import=geo_import,
+        namespace=ns,
+    )
+    geos = [g[0] for g in geos]
+
+    specs = [
+        (ColumnType.INT, [3, 7, 11, 13]),
+        (ColumnType.STR, ["a", "bb", "ccc", "dddd"]),
+        (ColumnType.FLOAT, [1.5, 2.25, -3.0, 0.0]),
+        (ColumnType.BOOL, [True, False, True, False]),
+    ]
+    cols = []
+    for i, (ctype, vals) in enumerate(specs):
+        col, _ = crud.column.create(
+            db=db,
+            obj_in=schemas.ColumnCreate(
+                canonical_path=f"c{i}", description="t", kind=ColumnKind.COUNT, type=ctype
+            ),
+            obj_meta=meta,
+            namespace=ns,
+        )
+        crud.column.set_values(
+            db, col=col, values=list(zip(geos, vals)), obj_meta=meta
+        )
+        cols.append((col, ctype, vals))
+
+    # Now map these already-valued geographies into a NEW set version.
+    layer, _ = crud.geo_layer.create(
+        db=db,
+        obj_in=schemas.GeoLayerCreate(path="f1layer", description="t"),
+        obj_meta=meta,
+        namespace=ns,
+    )
+    loc, _ = crud.locality.create_bulk(
+        db=db,
+        objs_in=[schemas.LocalityCreate(canonical_path="f1-loc", name="f1 loc")],
+        obj_meta=meta,
+    )
+    crud.geo_layer.map_locality(db=db, layer=layer, locality=loc[0], geographies=geos, obj_meta=meta)
+    sv = crud.geo_layer.get_set_by_locality(db=db, layer=layer, locality=loc[0])
+
+    for col, ctype, vals in cols:
+        row = (
+            db.query(models.ColumnValueCount)
+            .filter_by(col_id=col.col_id, set_version_id=sv.set_version_id)
+            .one()
+        )
+        expect = xor_fold([pair_digest(g.path, ctype, v) for g, v in zip(geos, vals)])
+        assert row.count == 4
+        assert (row.value_hash_hi, row.value_hash_lo) == expect, ctype

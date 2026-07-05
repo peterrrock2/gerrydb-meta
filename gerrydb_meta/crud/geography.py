@@ -502,7 +502,12 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
             )
         )
 
-        assert set(dict(old_path_hash_set).keys()) == set(dict(new_path_hash_set).keys())
+        missing = set(dict(new_path_hash_set).keys()) - set(dict(old_path_hash_set).keys())
+        if missing:
+            raise BulkPatchError(
+                "Cannot patch geographies without a current version in the target "
+                f"namespace: {sorted(missing)[:10]}"
+            )
 
         diff_set = new_path_hash_set - old_path_hash_set
         if any([pair[1] == empty_hash for pair in diff_set]) and not allow_empty_polys:
@@ -512,9 +517,6 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                 "empty. To allow for this, set the `allow_empty_polys` parameter to "
                 "`True`."
             )
-
-        path_set = [pair[0] for pair in diff_set]
-        assert len(path_set) == len(diff_set)
 
         return dict(diff_set)
 
@@ -573,7 +575,11 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
                         objs_in=[obj for obj in objs_in if obj.path in path_hash_dict],
                     )
 
-                    assert path_hash_dict == _path_hash_dict
+                    if path_hash_dict != _path_hash_dict:
+                        raise BulkPatchError(
+                            "Internal inconsistency while hashing patched "
+                            "geographies; no changes were committed."
+                        )
 
                     geo_id_to_version_dict.update(
                         self.__insert_geo_versions(

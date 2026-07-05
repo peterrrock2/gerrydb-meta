@@ -613,6 +613,17 @@ class NamespacedObjectApi:
             log.debug("IN PATCH FOR NAMESPACED OBJECT API")
             namespace_obj = self._namespace_with_write(db=db, scopes=scopes, path=namespace)
             obj = self._obj(db=db, namespace=namespace_obj, path=path)
+            if getattr(obj, "namespace_id", namespace_obj.namespace_id) != namespace_obj.namespace_id:
+                # The path resolved through a cross-namespace reference; the
+                # write scope that was checked belongs to the referencing
+                # namespace, not the object's owner.
+                raise HTTPException(
+                    status_code=HTTPStatus.FORBIDDEN,
+                    detail=(
+                        f"'{path}' is a reference to an object in another "
+                        "namespace and cannot be modified through the reference."
+                    ),
+                )
             patched_obj, etag = self.crud.patch(db=db, obj=obj, obj_meta=obj_meta, patch=obj_in)
             add_etag(response, etag)
             return self.get_schema.from_attributes(patched_obj)

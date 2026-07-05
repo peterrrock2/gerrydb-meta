@@ -45,6 +45,42 @@ def increment_column_value_counts(db: Session, *, col_id: int, geo_ids: Collecti
     )
 
 
+# Recomputes (col_id, set_version_id, count, value_hash) from scratch over
+# current column_value rows. The per-type value encoding mirrors
+# value_hash.encode_value byte-for-byte (float8send == struct.pack(">d"));
+# md5 halves fold with bit_xor exactly as xor_fold does in Python. `{where}`
+# selects which memberships to (re)compute.
+_HASH_REBUILD_SELECT = """
+    SELECT cv.col_id, m.set_version_id, COUNT(*) AS count,
+           bit_xor(('x' || substr(h.hx, 1, 16))::bit(64)::bigint) AS hi,
+           bit_xor(('x' || substr(h.hx, 17, 16))::bit(64)::bigint) AS lo
+    FROM {schema}.column_value cv
+    JOIN {schema}."column" col ON col.col_id = cv.col_id
+    JOIN {schema}.geo_set_member m ON m.geo_id = cv.geo_id
+    JOIN {schema}.geography g ON g.geo_id = cv.geo_id
+    CROSS JOIN LATERAL (
+        SELECT md5(
+            convert_to(g.path, 'UTF8') || '\\x00'::bytea ||
+            CASE col.type::text
+                WHEN 'INT' THEN convert_to('i:' || cv.val_int::text, 'UTF8')
+                WHEN 'STR' THEN convert_to('s:' || cv.val_str, 'UTF8')
+                WHEN 'FLOAT' THEN convert_to('f:', 'UTF8') || float8send(cv.val_float)
+                WHEN 'BOOL' THEN convert_to(
+                    'b:' || CASE WHEN cv.val_bool THEN '1' ELSE '0' END, 'UTF8')
+            END
+        ) AS hx
+    ) h
+    WHERE cv.valid_to IS NULL AND {where}
+    GROUP BY cv.col_id, m.set_version_id
+"""
+
+
+def hash_rebuild_select(where: str) -> str:
+    """Renders the fold SELECT with a membership predicate (e.g.
+    'm.set_version_id = :svid')."""
+    return _HASH_REBUILD_SELECT.format(schema=models.SCHEMA, where=where)
+
+
 def apply_value_hash_deltas(
     db: Session, *, col_id: int, deltas: dict[int, tuple[int, int]]
 ) -> None:

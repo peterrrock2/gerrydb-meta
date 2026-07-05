@@ -14,6 +14,7 @@ import click
 from sqlalchemy.orm import Session as SessionType
 from uvicorn.config import logger as log
 
+from gerrydb_meta.crud.column import hash_rebuild_select
 from gerrydb_meta.crud.obj_meta import obj_meta
 from gerrydb_meta.db import Session
 from gerrydb_meta.enums import GroupPermissions, NamespaceGroup, ScopeType
@@ -934,20 +935,17 @@ def stats_revalidate(fix: bool):
             )
             admin.session.execute(
                 text(
-                    """
-                    INSERT INTO gerrydb.column_value_count (col_id, set_version_id, count)
-                    SELECT cv.col_id, m.set_version_id, COUNT(*)
-                    FROM gerrydb.column_value cv
-                    JOIN gerrydb.geo_set_member m ON m.geo_id = cv.geo_id
-                    JOIN gerrydb.geo_set_version sv
-                        ON sv.set_version_id = m.set_version_id
-                    WHERE cv.valid_to IS NULL AND sv.valid_to IS NULL
-                    GROUP BY cv.col_id, m.set_version_id
-                    """
+                    "INSERT INTO gerrydb.column_value_count "
+                    "(col_id, set_version_id, count, value_hash_hi, value_hash_lo) "
+                    + hash_rebuild_select(
+                        "m.set_version_id IN ("
+                        "SELECT set_version_id FROM gerrydb.geo_set_version "
+                        "WHERE valid_to IS NULL)"
+                    )
                 )
             )
             admin.session.commit()
-            print("Rebuilt counts for current set versions.")
+            print("Rebuilt counts and fingerprints for current set versions.")
 
 
 if __name__ == "__main__":
