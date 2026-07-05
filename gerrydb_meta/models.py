@@ -75,8 +75,11 @@ class UserGroup(Base):
     scopes: Mapped[list["UserGroupScope"]] = relationship(
         "UserGroupScope", lazy="joined", uselist=True
     )
+    # Lazy: authentication walks user and group scopes, never the full
+    # membership list; eager-joining it multiplied every auth query by group
+    # size.
     users: Mapped[list["UserGroupMember"]] = relationship(
-        "UserGroupMember", lazy="joined", back_populates="group"
+        "UserGroupMember", back_populates="group"
     )
     meta: Mapped["ObjectMeta"] = relationship("ObjectMeta")
 
@@ -212,7 +215,7 @@ class Locality(Base):
         primaryjoin="Locality.canonical_ref_id==LocalityRef.ref_id",
     )
     refs: Mapped[list["LocalityRef"]] = relationship(
-        "LocalityRef", primaryjoin="Locality.loc_id==LocalityRef.loc_id"
+        "LocalityRef", primaryjoin="Locality.loc_id==LocalityRef.loc_id", lazy="selectin"
     )
 
     def __str__(self):  # pragma: no cover
@@ -372,7 +375,9 @@ class GeoVersion(Base):
     )
 
     # Create a relationship to GeoBits
-    geo_bin = relationship("GeoBin", backref="geo_versions", lazy="joined")
+    # Lazy: patch/fork paths load version handles in bulk and never read the
+    # geometry; an eager join drags the full geometry blob along per row.
+    geo_bin = relationship("GeoBin", backref="geo_versions")
 
     # Now use association_proxy to expose the geography attribute directly
     geography = association_proxy("geo_bin", "geography")
@@ -476,7 +481,7 @@ class DataColumn(Base):
         primaryjoin="DataColumn.canonical_ref_id==ColumnRef.ref_id",
     )  # pragma: no cover
     refs: Mapped[list["ColumnRef"]] = relationship(
-        "ColumnRef", primaryjoin="DataColumn.col_id==ColumnRef.col_id"
+        "ColumnRef", primaryjoin="DataColumn.col_id==ColumnRef.col_id", lazy="selectin"
     )  # pragma: no cover
 
     def __repr__(self):  # pragma: no cover
@@ -546,7 +551,7 @@ class ColumnSet(Base):
     meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")
-    columns: Mapped[list["ColumnSetMember"]] = relationship("ColumnSetMember", lazy="joined")
+    columns: Mapped[list["ColumnSetMember"]] = relationship("ColumnSetMember", lazy="selectin")
     namespace: Mapped[Namespace] = relationship("Namespace", lazy="joined")
 
     def __repr__(self):  # pragma: no cover
@@ -657,7 +662,10 @@ class Plan(Base):
     namespace: Mapped[Namespace] = relationship("Namespace", lazy="joined")
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")
     set_version: Mapped[GeoSetVersion] = relationship("GeoSetVersion", lazy="joined")
-    assignments: Mapped[list["PlanAssignment"]] = relationship("PlanAssignment", lazy="joined")
+    # Deliberately lazy: a state-scale plan has hundreds of thousands of
+    # assignment rows, and plan responses build from column projections, not
+    # from this relationship.
+    assignments: Mapped[list["PlanAssignment"]] = relationship("PlanAssignment")
 
     def __repr__(self):  # pragma: no cover
         return f"Plan(path={self.path}, num_districts={self.num_districts})"
@@ -670,7 +678,7 @@ class PlanAssignment(Base):
     geo_id: Mapped[int] = mapped_column(Integer, ForeignKey("geography.geo_id"), primary_key=True)
     assignment: Mapped[str] = mapped_column(Text, nullable=False)
 
-    geo: Mapped["Geography"] = relationship("Geography", lazy="joined")
+    geo: Mapped["Geography"] = relationship("Geography")
 
 
 class Graph(Base):
@@ -805,11 +813,14 @@ class ViewTemplateVersion(Base):
     meta: Mapped[ObjectMeta] = relationship("ObjectMeta", lazy="joined")
     parent: Mapped[ViewTemplate] = relationship("ViewTemplate", lazy="joined")
 
+    # selectin, not joined: two sibling joined collections cartesian-multiply
+    # (columns x sets x set members per template row); selectin loads each
+    # with one batched query instead.
     columns: Mapped[list["ViewTemplateColumnMember"]] = relationship(
-        "ViewTemplateColumnMember", lazy="joined"
+        "ViewTemplateColumnMember", lazy="selectin"
     )
     column_sets: Mapped[list["ViewTemplateColumnSetMember"]] = relationship(
-        "ViewTemplateColumnSetMember", lazy="joined"
+        "ViewTemplateColumnSetMember", lazy="selectin"
     )
 
 

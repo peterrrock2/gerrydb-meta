@@ -144,7 +144,11 @@ class CRLocality(CRBase[models.Locality, schemas.LocalityCreate]):
 
             etag = self._update_etag(db)
 
-        # Refresh localities with new aliases, etc. before returning.
+        # Refresh localities with new aliases, etc. before returning. The
+        # alias rows were inserted directly, so any refs collection cached on
+        # the returned instances predates them; expire so access reloads.
+        for loc in locs:
+            db.expire(loc, ["refs"])
         refreshed_locs = (
             db.query(models.Locality)
             .filter(models.Locality.loc_id.in_(loc_ids_by_path.values()))
@@ -212,6 +216,9 @@ class CRLocality(CRBase[models.Locality, schemas.LocalityCreate]):
                     "Failed to create aliases for new location. "
                     "(One or more aliases may already exist.)"
                 )
+        # The rows above bypass the relationship; drop any cached collection
+        # so later serialization reloads the aliases.
+        db.expire(loc, ["refs"])
 
 
 locality = CRLocality(models.Locality)

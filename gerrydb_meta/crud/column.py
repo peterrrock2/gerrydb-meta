@@ -604,6 +604,9 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
             except IntegrityError:  # pragma: no cover
                 db.rollback()  # Rollback only this failed insert
                 log.error(f"Failed to add alias {alias_path} for column {col.col_id}. Skipping.")
+        # The rows above bypass the relationship; drop any cached collection
+        # so later serialization reloads the aliases.
+        db.expire(col, ["refs"])
 
 
 column = CRColumn(models.DataColumn)
