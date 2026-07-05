@@ -135,8 +135,7 @@ class GeographyApi(NamespacedObjectApi):
         ):
             log.debug("GET %s/%s", namespace, path)
             namespace_obj = self._namespace_with_read(db=db, scopes=scopes, path=namespace)
-            self._check_etag(db=db, namespace=namespace_obj, header=if_none_match)
-            etag = self.crud.etag(db, namespace_obj)
+            etag = self._check_etag(db=db, namespace=namespace_obj, header=if_none_match)
             obj = self._obj(db=db, namespace=namespace_obj, path=path)
             add_etag(response, etag)
             return self.get_schema.from_attributes(obj)
