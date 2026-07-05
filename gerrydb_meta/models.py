@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 from geoalchemy2 import Geography as SqlGeography
 from sqlalchemy import (
+    DDL,
     JSON,
     BigInteger,
     Boolean,
@@ -21,6 +22,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.dialects import postgresql
@@ -307,6 +309,16 @@ class GeoSetMember(Base):
     geo: Mapped["Geography"] = relationship("Geography", lazy="joined")
 
 
+# Hot on the read side (set-membership joins on every render and stats write)
+# but only ~17M rows nationally, so the default 20% dead-tuple threshold lets
+# millions of dead tuples pile up before autovacuum fires. Vacuum at 5%.
+event.listen(
+    GeoSetMember.__table__,
+    "after_create",
+    DDL("ALTER TABLE %(fullname)s SET (autovacuum_vacuum_scale_factor = 0.05)"),
+)
+
+
 class GeoBin(Base):
     __tablename__ = "geo_bin"
     geo_bin_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -341,7 +353,6 @@ class GeoBin(Base):
 class GeoVersion(Base):
     __tablename__ = "geo_version"
     __table_args__ = (
-        Index("ix_geo_version_geo_id_valid_from", "geo_id", "valid_from"),
         Index("ix_geo_version_geo_id_valid_to", "geo_id", "valid_to"),
     )
 
@@ -481,7 +492,7 @@ class ColumnRef(Base):
         Integer, ForeignKey("namespace.namespace_id"), nullable=False
     )
     col_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("column.col_id"))
-    path: Mapped[str] = mapped_column(Text, index=True, nullable=False)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
     meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
     namespace: Mapped[Namespace] = relationship("Namespace", lazy="joined")
@@ -557,14 +568,17 @@ class ColumnValue(Base):
     __tablename__ = "column_value"
     # The PK already covers (col_id, geo_id, valid_from); no separate unique index.
     __table_args__ = (
-        Index("ix_column_value_geo_id_valid_from", "geo_id", "valid_from"),
         Index("ix_column_value_geo_id_valid_to", "geo_id", "valid_to"),
         {"postgresql_partition_by": "LIST (col_id)"},
     )
 
+    # No FK to "column": LIST partition routing already rejects unknown
+    # col_ids (a value row can only land in the partition created with its
+    # column), and columns are never deleted, so the RI trigger would only
+    # re-check an invariant the partition tree enforces, at the cost of one
+    # trigger firing per row across billions of bulk-load inserts.
     col_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("column.col_id"),
         nullable=False,
         primary_key=True,
     )
@@ -618,9 +632,9 @@ class Plan(Base):
 
     plan_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     namespace_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("namespace.namespace_id"), nullable=False, index=True
+        Integer, ForeignKey("namespace.namespace_id"), nullable=False
     )
-    path: Mapped[int] = mapped_column(Text, nullable=False, index=True)
+    path: Mapped[int] = mapped_column(Text, nullable=False)
     set_version_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("geo_set_version.set_version_id"),
@@ -671,9 +685,9 @@ class Graph(Base):
         index=True,
     )
     namespace_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("namespace.namespace_id"), nullable=False, index=True
+        Integer, ForeignKey("namespace.namespace_id"), nullable=False
     )
-    path: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -694,6 +708,7 @@ class Graph(Base):
 
 class GraphRender(Base):
     __tablename__ = "graph_render"
+    __table_args__ = (Index("ix_graph_render_graph_id_created_at", "graph_id", "created_at"),)
 
     render_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
     graph_id: Mapped[int] = mapped_column(Integer, ForeignKey("graph.graph_id"), nullable=False)
@@ -729,9 +744,9 @@ class Ensemble(Base):
 
     ensemble_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     namespace_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("namespace.namespace_id"), nullable=False, index=True
+        Integer, ForeignKey("namespace.namespace_id"), nullable=False
     )
-    path: Mapped[int] = mapped_column(Text, nullable=False, index=True)
+    path: Mapped[int] = mapped_column(Text, nullable=False)
     graph_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("graph.graph_id"), nullable=False, index=True
     )
@@ -766,9 +781,9 @@ class ViewTemplate(Base):
 
     template_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     namespace_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("namespace.namespace_id"), nullable=False, index=True
+        Integer, ForeignKey("namespace.namespace_id"), nullable=False
     )
-    path: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     meta_id: Mapped[int] = mapped_column(Integer, ForeignKey("meta.meta_id"), nullable=False)
 
@@ -852,9 +867,9 @@ class View(Base):
 
     view_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     namespace_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("namespace.namespace_id"), nullable=False, index=True
+        Integer, ForeignKey("namespace.namespace_id"), nullable=False
     )
-    path: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
     template_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("view_template.template_id"), nullable=False
     )
@@ -891,6 +906,7 @@ class View(Base):
 
 class ViewRender(Base):
     __tablename__ = "view_render"
+    __table_args__ = (Index("ix_view_render_view_id_created_at", "view_id", "created_at"),)
 
     render_id: Mapped[UUID] = mapped_column(postgresql.UUID(as_uuid=True), primary_key=True)
     view_id: Mapped[int] = mapped_column(Integer, ForeignKey("view.view_id"), nullable=False)
