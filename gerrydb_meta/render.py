@@ -88,7 +88,7 @@ def _init_base_graph_gpkg_extensions(conn: sqlite3.Connection, layer_name: str) 
     conn.execute(
         f"""
         CREATE TABLE gerrydb_geo_attrs (
-            path        TEXT PRIMARY KEY REFERENCES {layer_name}(path),
+            path        TEXT PRIMARY KEY REFERENCES "{layer_name}"(path),
             meta_id     BLOB NOT NULL    REFERENCES gerrydb_geo_meta(meta_id),
             valid_from  TEXT
         )
@@ -181,7 +181,7 @@ def _init_base_gpkg_extensions(conn: sqlite3.Connection, layer_name: str) -> Non
     conn.execute(
         f"""
         CREATE TABLE gerrydb_geo_attrs (
-            path        TEXT PRIMARY KEY REFERENCES {layer_name}(path),
+            path        TEXT PRIMARY KEY REFERENCES "{layer_name}"(path),
             meta_id     BLOB NOT NULL    REFERENCES gerrydb_geo_meta(meta_id),
             valid_from  TEXT
         )
@@ -259,8 +259,8 @@ def _init_gpkg_graph_extension(conn: sqlite3.Connection, layer_name: str):
     conn.execute(
         f"""
         CREATE TABLE gerrydb_graph_edge (
-            path_1  TEXT NOT NULL REFERENCES {layer_name}(path),
-            path_2  TEXT NOT NULL REFERENCES {layer_name}(path),
+            path_1  TEXT NOT NULL REFERENCES "{layer_name}"(path),
+            path_2  TEXT NOT NULL REFERENCES "{layer_name}"(path),
             weights TEXT,
             CONSTRAINT unique_edges UNIQUE (path_1, path_2)
         )
@@ -292,7 +292,7 @@ def _init_gpkg_plans_extension(conn: sqlite3.Connection, layer_name: str, column
     conn.execute(
         f"""
         CREATE TABLE gerrydb_plan_assignment (
-            path TEXT PRIMARY KEY REFERENCES {layer_name}(path),
+            path TEXT PRIMARY KEY REFERENCES "{layer_name}"(path),
             {table_columns} 
         )
         """
@@ -401,7 +401,7 @@ def __validate_geo_and_internal_point_rows_count(
         except sqlite3.OperationalError:
             pass
 
-        return conn.execute(f"SELECT COUNT(*) FROM {layer_name}").fetchone()[0]
+        return conn.execute(f'SELECT COUNT(*) FROM "{layer_name}"').fetchone()[0]
 
     try:
         geo_row_count = _feature_count(geo_layer_name)
@@ -545,9 +545,9 @@ def __update_view_metadata_gpkg(
     context: ViewRenderContext | GraphRenderContext,
 ):
     # Create indices and references on paths.
-    conn.execute(f"CREATE UNIQUE INDEX idx_geo_path ON {geo_layer_name}(path)")
+    conn.execute(f'CREATE UNIQUE INDEX idx_geo_path ON "{geo_layer_name}"(path)')
     conn.execute(
-        f"CREATE UNIQUE INDEX idx_internal_point_path ON {internal_point_layer_name}(path)"
+        f'CREATE UNIQUE INDEX idx_internal_point_path ON "{internal_point_layer_name}"(path)'
     )
 
     # Add extended (non-geographic) data.
@@ -663,9 +663,9 @@ def __update_graph_metadata_gpkg(
     internal_point_layer_name: str,
     context: GraphRenderContext,
 ):
-    conn.execute(f"CREATE UNIQUE INDEX idx_geo_path ON {geo_layer_name}(path)")
+    conn.execute(f'CREATE UNIQUE INDEX idx_geo_path ON "{geo_layer_name}"(path)')
     conn.execute(
-        f"CREATE UNIQUE INDEX idx_internal_point_path ON {internal_point_layer_name}(path)"
+        f'CREATE UNIQUE INDEX idx_internal_point_path ON "{internal_point_layer_name}"(path)'
     )
 
     _init_base_graph_gpkg_extensions(conn, geo_layer_name)
