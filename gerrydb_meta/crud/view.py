@@ -974,6 +974,9 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             ),
         )
         log.debug("The pivot query is %s", full_pivot_query)
+        # Render-sized memory for the pivot only; the global work_mem is kept
+        # small so concurrent users cannot OOM the container.
+        db.execute(text("SET LOCAL work_mem = '256MB'"))
         # Created ON the session: the pivot must see this transaction's
         # uncommitted data, and any other connection would deadlock against
         # locks this session already holds (e.g. a column-create's partition
