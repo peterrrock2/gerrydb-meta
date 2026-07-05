@@ -3,11 +3,12 @@
 import uuid
 from typing import Tuple
 
-from sqlalchemy import exc, insert, select
+from sqlalchemy import exc, select
 from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
 
 from gerrydb_meta import models, schemas
+from gerrydb_meta.utils import copy_rows
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.exceptions import CreateValueError
 
@@ -121,16 +122,15 @@ class CRPlan(NamespacedCRBase[models.Plan, schemas.PlanCreate]):
                 )
 
             db.refresh(plan)
-            db.execute(
-                insert(models.PlanAssignment),
-                [
-                    {
-                        "plan_id": plan.plan_id,
-                        "geo_id": geo.geo_id,
-                        "assignment": assignment,
-                    }
+            copy_rows(
+                db,
+                table=f"{models.SCHEMA}.plan_assignment",
+                columns=("plan_id", "geo_id", "assignment"),
+                rows=(
+                    (plan.plan_id, geo.geo_id, assignment)
                     for geo, assignment in assignments.items()
-                ],
+                ),
+                quote_all=True,
             )
             etag = self._update_etag(db, namespace)
 

@@ -4,13 +4,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Tuple
 
-from sqlalchemy import exc, func, insert, text, update
+from sqlalchemy import exc, func, text, update
 from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
 
 from gerrydb_meta import models, schemas
 from gerrydb_meta.crud.base import NamespacedCRBase, normalize_path
 from gerrydb_meta.crud.column import seed_set_version_stats
+from gerrydb_meta.utils import copy_rows
 from gerrydb_meta.exceptions import CreateValueError
 
 
@@ -165,15 +166,11 @@ class CRGeoLayer(NamespacedCRBase[models.GeoLayer, schemas.GeoLayerCreate]):
             db.flush()
             db.refresh(set_version)
 
-            db.execute(
-                insert(models.GeoSetMember),
-                [
-                    {
-                        "set_version_id": set_version.set_version_id,
-                        "geo_id": geo.geo_id,
-                    }
-                    for geo in geographies
-                ],
+            copy_rows(
+                db,
+                table=f"{models.SCHEMA}.geo_set_member",
+                columns=("set_version_id", "geo_id"),
+                rows=((set_version.set_version_id, geo.geo_id) for geo in geographies),
             )
 
             # Seed current-value counts AND fingerprints for the new set version. Bulk loads map
