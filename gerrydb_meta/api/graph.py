@@ -22,7 +22,7 @@ from gerrydb_meta.api import render_cache
 from gerrydb_meta.api.base import (
     add_etag,
     geo_set_from_paths,
-    geos_from_paths,
+    geo_refs_from_paths,
 )
 from gerrydb_meta.api.deps import (
     can_read_localities,
@@ -52,7 +52,7 @@ def create_graph(
     response: Response,
     namespace: str,
     obj_in: schemas.GraphCreate,
-    include_edges: bool = True,
+    include_edges: bool = False,
     db: Session = Depends(get_db),
     obj_meta: models.ObjectMeta = Depends(get_obj_meta),
     scopes: ScopeManager = Depends(get_scopes),
@@ -88,7 +88,9 @@ def create_graph(
     edge_geo_paths = list(
         set(edge[0] for edge in obj_in.edges) | set(edge[1] for edge in obj_in.edges)
     )
-    edge_geos = geos_from_paths(paths=edge_geo_paths, namespace=namespace, db=db, scopes=scopes)
+    edge_geos = geo_refs_from_paths(
+        paths=edge_geo_paths, namespace=namespace, db=db, scopes=scopes
+    )
     edge_geos_by_path = dict(zip(edge_geo_paths, edge_geos))
 
     log.debug("Time to get edge_geos: %s", time.perf_counter() - start)

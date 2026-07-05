@@ -136,8 +136,23 @@ class NamespacedCRBase(Generic[ModelType, CreateSchemaType], ABC):
     ) -> Optional[ModelType]:  # pragma: no cover
         pass
 
-    def all_in_namespace(self, db: Session, *, namespace: Namespace) -> List[ModelType]:
-        return db.query(self.model).filter(self.model.namespace_id == namespace.namespace_id).all()
+    def all_in_namespace(
+        self,
+        db: Session,
+        *,
+        namespace: Namespace,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> List[ModelType]:
+        query = db.query(self.model).filter(self.model.namespace_id == namespace.namespace_id)
+        if limit is not None or offset:
+            # Deterministic order only when paginating (order by primary key:
+            # not every model has a path column); unpaginated listings keep
+            # their historical arbitrary order.
+            query = query.order_by(*self.model.__mapper__.primary_key).offset(offset)
+            if limit is not None:
+                query = query.limit(limit)
+        return query.all()
 
     @abstractmethod
     def create(

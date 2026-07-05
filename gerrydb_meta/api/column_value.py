@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
 
 from gerrydb_meta import crud, models, schemas
-from gerrydb_meta.api.base import geos_from_paths, namespace_write_error_msg
+from gerrydb_meta.api.base import geo_refs_from_paths, namespace_write_error_msg
 from gerrydb_meta.api.deps import get_db, get_obj_meta, get_scopes
 from gerrydb_meta.crud.base import normalize_path
 from gerrydb_meta.scopes import ScopeManager
@@ -54,7 +54,7 @@ def set_column_values(
             ),
         )
 
-    geos = geos_from_paths(
+    geos = geo_refs_from_paths(
         paths=[val.path for val in values], namespace=namespace, db=db, scopes=scopes
     )
 

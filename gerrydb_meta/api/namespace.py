@@ -40,7 +40,6 @@ def read_namespace(
     scopes: ScopeManager = Depends(get_scopes),
     if_none_match: str | None = Header(default=None),
 ) -> schemas.Namespace:
-    etag = crud.locality.etag(db=db)
     namespace_obj = crud.namespace.get(db=db, path=namespace)
 
     if namespace_obj is None or not scopes.can_read_in_namespace(namespace_obj):
@@ -52,7 +51,7 @@ def read_namespace(
             ),
         )
 
-    check_etag(db=db, crud_obj=crud.namespace, header=if_none_match)
+    etag = check_etag(db=db, crud_obj=crud.namespace, header=if_none_match)
     add_etag(response, etag)
     return schemas.Namespace.from_attributes(namespace_obj)
 

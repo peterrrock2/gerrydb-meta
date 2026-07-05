@@ -113,8 +113,12 @@ def test_api_locality_create_read__with_redirects(ctx_locality_read_write):
     )
     assert create_response.status_code == HTTPStatus.CREATED
 
+    # Aliases serve the canonical body directly (no redirect: the old 308
+    # URL rewrite corrupted URLs whose host or path contained the alias
+    # string).
     read_response = ctx.client.get(f"{LOCALITIES_ROOT}/{alias}", follow_redirects=False)
-    assert read_response.status_code == HTTPStatus.PERMANENT_REDIRECT
+    assert read_response.status_code == HTTPStatus.OK
+    assert read_response.json()["canonical_path"] == path
 
 
 def test_api_locality_create__with_no_meta(ctx_no_scopes):

@@ -114,6 +114,7 @@ def test_good_graph_create_get(ctx_no_scopes, me_2010_gdf, me_2010_nx_graph, cap
             layer="counties_graph",
             edges=list(me_2010_nx_graph.edges(data=True)),
         ),
+        include_edges=True,
         db=db,
         obj_meta=meta,
         scopes=scopes,

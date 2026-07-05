@@ -171,9 +171,14 @@ class CRViewTemplate(NamespacedCRBase[models.ViewTemplate, schemas.ViewTemplateC
         )
 
     def all_in_namespace(
-        self, db: Session, *, namespace: models.Namespace
+        self,
+        db: Session,
+        *,
+        namespace: models.Namespace,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[models.ViewTemplateVersion]:
-        return (
+        query = (
             db.query(models.ViewTemplateVersion)
             .filter(
                 models.ViewTemplateVersion.template_id.in_(
@@ -183,8 +188,12 @@ class CRViewTemplate(NamespacedCRBase[models.ViewTemplate, schemas.ViewTemplateC
                 ),
                 models.ViewTemplateVersion.valid_to.is_(None),
             )
-            .all()
         )
+        if limit is not None or offset:
+            query = query.order_by(models.ViewTemplateVersion.template_version_id).offset(offset)
+            if limit is not None:
+                query = query.limit(limit)
+        return query.all()
 
 
 view_template = CRViewTemplate(models.ViewTemplate)

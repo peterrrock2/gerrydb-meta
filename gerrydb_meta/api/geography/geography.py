@@ -162,4 +162,7 @@ router = GeographyApi(
     create_schema=None,
     obj_name_singular="Geography",
     obj_name_plural="Geographies",
+    # A block-level namespace holds millions of geographies; the msgpack
+    # list endpoint serves "all paths" cheaply, so the JSON listing pages.
+    list_hard_cap=10_000,
 ).router()

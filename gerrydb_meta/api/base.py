@@ -4,13 +4,14 @@ import inspect
 from collections import defaultdict
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Any, Callable, Type
+from typing import Any, Callable, Type, NamedTuple
 from uuid import UUID
 
 import ormsgpack as msgpack
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
 
@@ -28,15 +29,17 @@ ENDPOINT_TO_CRUD = {
 }
 
 
-def check_etag(db: Session, crud_obj: crud.CRBase, header: str) -> None:
+def check_etag(db: Session, crud_obj: crud.CRBase, header: str):
     """Processes an `If-None-Match` header.
 
-    Raises 304 Not Modified if the collection's current ETag
-    matches the ETag in `header`. Otherwise, does nothing.
+    Raises 304 Not Modified if the collection's current ETag matches the
+    ETag in `header`. Otherwise returns the etag for reuse in the response
+    (it costs a query; callers should not fetch it twice).
     """
     etag = crud_obj.etag(db=db)
     if etag is not None and header == f'"{etag}"':
         raise HTTPException(status_code=HTTPStatus.NOT_MODIFIED)
+    return etag
 
 
 def check_namespaced_etag(
@@ -48,11 +51,13 @@ def check_namespaced_etag(
     """Processes an `If-None-Match` header.
 
     Raises 304 Not Modified if the namespaced collection's current ETag
-    matches the ETag in `header`. Otherwise, does nothing.
+    matches the ETag in `header`. Otherwise returns the etag for reuse in
+    the response (it costs a query; callers should not fetch it twice).
     """
     etag = crud_obj.etag(db=db, namespace=namespace)
     if etag is not None and header == f'"{etag}"':
         raise HTTPException(status_code=HTTPStatus.NOT_MODIFIED)
+    return etag
 
 
 def add_etag(response: Response, etag: UUID | None) -> None:
@@ -304,6 +309,104 @@ def geos_from_paths(
     )
 
 
+class GeoRef(NamedTuple):
+    """Lightweight stand-in for a Geography row on bulk write paths.
+
+    Carries exactly the attributes bulk writers consume (`geo_id`, `path`,
+    `namespace_id`, `full_path`); hashable, so it can key assignment dicts.
+    """
+
+    geo_id: int
+    path: str
+    namespace_id: int
+    full_path: str
+
+
+def geo_refs_from_paths(
+    paths: list[str], namespace: str, db: Session, scopes: ScopeManager
+) -> list[GeoRef]:
+    """Resolves geography paths to lightweight refs, possibly across namespaces.
+
+    Same contract, ordering, and error behavior as `geos_from_paths`, but
+    resolves through a three-column projection instead of ORM entities:
+    Geography eager-joins meta and namespace, so the ORM route materializes a
+    four-table join per path that bulk writers (column values, set mapping,
+    plan/graph creation) never read.
+
+    Raises:
+        HTTPException: On parsing failure, authorization failure, or lookup failure.
+    """
+    parsed: list[tuple[str, str]] = []
+    for path in paths:
+        # Absoluteness must be read off the raw path: normalize_path strips
+        # leading slashes, so the normalized form never starts with "/".
+        is_absolute = path.startswith("/")
+        norm = normalize_path(path, case_sensitive_uid=True)
+        parts = norm.split("/")
+        if (is_absolute and len(parts) != 2) or (not is_absolute and len(parts) != 1):
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST,
+                detail=(
+                    f'Bad resource path "/geographies/{norm}": '
+                    "must have form /<resource>/<namespace>/<path>"
+                ),
+            )
+        parsed.append((parts[0], parts[1]) if is_absolute else (namespace, norm))
+
+    if len(set(parsed)) < len(parsed):
+        dup_paths = [
+            ("geographies", ns, path) for ns, path in parsed if parsed.count((ns, path)) > 1
+        ]
+        raise HTTPException(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail=f"Duplicate resource paths found {dup_paths}",
+        )
+
+    namespace_ids: dict[str, int] = {}
+    for ns in {ns for ns, _ in parsed}:
+        namespace_obj = crud.namespace.get(db=db, path=ns)
+        if namespace_obj is None or not scopes.can_read_in_namespace(namespace_obj):
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND,
+                detail=(
+                    f'Namespace "{ns}" not found, or you do not have '
+                    "sufficient permissions to read data in this namespace."
+                ),
+            )
+        namespace_ids[ns] = namespace_obj.namespace_id
+
+    refs_by_key: dict[tuple[str, str], GeoRef] = {}
+    for ns, ns_id in namespace_ids.items():
+        ns_paths = [path for p_ns, path in parsed if p_ns == ns]
+        rows = db.execute(
+            select(
+                models.Geography.geo_id,
+                models.Geography.path,
+                models.Geography.namespace_id,
+            ).where(
+                models.Geography.namespace_id == ns_id,
+                models.Geography.path.in_(ns_paths),
+            )
+        )
+        for row in rows:
+            refs_by_key[(ns, row.path)] = GeoRef(
+                geo_id=row.geo_id,
+                path=row.path,
+                namespace_id=row.namespace_id,
+                full_path=f"/{ns}/{row.path}",
+            )
+
+    if len(refs_by_key) < len(set(parsed)):
+        missing = set(parsed) - set(refs_by_key)
+        formatted_missing = [f"/geographies/{ns}/{path}" for ns, path in sorted(missing)]
+        raise HTTPException(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail=f"Not found: {', '.join(formatted_missing)}",
+        )
+
+    return [refs_by_key[key] for key in parsed]
+
+
 def geo_set_from_paths(
     locality: str, layer: str, namespace: str, *, db: Session, scopes: ScopeManager
 ) -> models.GeoSetVersion:
@@ -426,6 +529,12 @@ class NamespacedObjectApi:
     obj_name_singular: str
     obj_name_plural: str
     patch_schema: crud.PatchSchemaType | None = None
+    # Listing schema override: collections can serialize a slimmer shape than
+    # single gets (e.g. plans list without per-geography assignments).
+    list_schema: crud.GetSchemaType | None = None
+    # Server-side ceiling on list page size; None means unbounded. Set on
+    # collections that can reach millions of rows (geographies).
+    list_hard_cap: int | None = None
 
     def _namespace_with_read(
         self,
@@ -509,13 +618,13 @@ class NamespacedObjectApi:
             )
         return obj
 
-    def _check_etag(self, *, db: Session, namespace: models.Namespace, header: str | None) -> None:
+    def _check_etag(self, *, db: Session, namespace: models.Namespace, header: str | None):
         """Processes an `If-None-Match` header.
 
         Raises 304 Not Modified if the namespaced collection's current ETag
-        matches the ETag in `header`. Otherwise, does nothing.
+        matches the ETag in `header`. Otherwise returns the etag.
         """
-        check_namespaced_etag(db=db, crud_obj=self.crud, namespace=namespace, header=header)
+        return check_namespaced_etag(db=db, crud_obj=self.crud, namespace=namespace, header=header)
 
     def _get(self, router: APIRouter) -> Callable:
         @router.get(
@@ -534,8 +643,7 @@ class NamespacedObjectApi:
         ):
             log.debug("IN GET FOR NAMESPACED OBJECT API")
             namespace_obj = self._namespace_with_read(db=db, scopes=scopes, path=namespace)
-            self._check_etag(db=db, namespace=namespace_obj, header=if_none_match)
-            etag = self.crud.etag(db, namespace_obj)
+            etag = self._check_etag(db=db, namespace=namespace_obj, header=if_none_match)
             obj = self._obj(db=db, namespace=namespace_obj, path=path)
             add_etag(response, etag)
             return self.get_schema.from_attributes(obj)
@@ -543,26 +651,33 @@ class NamespacedObjectApi:
         return get_route
 
     def _all(self, router: APIRouter) -> Callable:
+        list_schema = self.list_schema or self.get_schema
+
         @router.get(
             "/{namespace}",
-            response_model=list[self.get_schema],
+            response_model=list[list_schema],
             name=f"Read {self.obj_name_plural}",
         )
         def all_route(
             *,
             response: Response,
             namespace: str,
+            limit: int | None = Query(default=None, ge=1),
+            offset: int = Query(default=0, ge=0),
             db: Session = Depends(get_db),
             scopes: ScopeManager = Depends(get_scopes),
             if_none_match: str | None = Header(default=None),
         ):
             log.debug("IN GET ALL FOR NAMESPACED OBJECT API")
             namespace_obj = self._namespace_with_read(db=db, scopes=scopes, path=namespace)
-            self._check_etag(db=db, namespace=namespace_obj, header=if_none_match)
-            etag = self.crud.etag(db, namespace_obj)
-            objs = self.crud.all_in_namespace(db=db, namespace=namespace_obj)
+            etag = self._check_etag(db=db, namespace=namespace_obj, header=if_none_match)
+            if self.list_hard_cap is not None:
+                limit = min(limit or self.list_hard_cap, self.list_hard_cap)
+            objs = self.crud.all_in_namespace(
+                db=db, namespace=namespace_obj, limit=limit, offset=offset
+            )
             add_etag(response, etag)
-            return [self.get_schema.from_attributes(obj) for obj in objs]
+            return [list_schema.from_attributes(obj) for obj in objs]
 
         return all_route
 
