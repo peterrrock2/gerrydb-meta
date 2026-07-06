@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import click
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session as SessionType
 from uvicorn.config import logger as log
 
@@ -92,14 +93,18 @@ def grant_scope(
         scopes = [scopes]
 
     for scope in scopes:
-        scope = UserScope(
-            user_id=user.user_id,
-            scope=scope,
-            namespace_group=namespace_group,
-            namespace_id=namespace_id,
-            meta_id=meta.meta_id,
+        # Idempotent: granting an already-held scope is a no-op.
+        db.execute(
+            pg_insert(UserScope)
+            .values(
+                user_id=user.user_id,
+                scope=scope,
+                namespace_group=namespace_group,
+                namespace_id=namespace_id,
+                meta_id=meta.meta_id,
+            )
+            .on_conflict_do_nothing(constraint="uq_user_scope_grant")
         )
-        db.add(scope)
 
     db.flush()
     db.refresh(user)
@@ -124,14 +129,18 @@ def grant_user_group_scope(
         scopes = [scopes]
 
     for scope in scopes:
-        scope = UserGroupScope(
-            group_id=group.group_id,
-            scope=scope,
-            namespace_group=namespace_group,
-            namespace_id=namespace_id,
-            meta_id=meta.meta_id,
+        # Idempotent: granting an already-held scope is a no-op.
+        db.execute(
+            pg_insert(UserGroupScope)
+            .values(
+                group_id=group.group_id,
+                scope=scope,
+                namespace_group=namespace_group,
+                namespace_id=namespace_id,
+                meta_id=meta.meta_id,
+            )
+            .on_conflict_do_nothing(constraint="uq_user_group_scope_grant")
         )
-        db.add(scope)
         db.flush()
         db.refresh(group)
 

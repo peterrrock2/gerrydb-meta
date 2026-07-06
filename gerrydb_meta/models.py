@@ -103,7 +103,19 @@ class UserGroupMember(Base):
 
 class UserScope(Base):
     __tablename__ = "user_scope"
-    __table_args__ = (UniqueConstraint("user_id", "scope", "scope", "namespace_id"),)
+    # One row per exact grant. NULLS NOT DISTINCT: namespace_group and
+    # namespace_id are nullable, and default UNIQUE semantics would let
+    # global grants (both NULL) duplicate without bound.
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "scope",
+            "namespace_group",
+            "namespace_id",
+            name="uq_user_scope_grant",
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
 
     user_perm_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.user_id"), nullable=False)
@@ -126,7 +138,17 @@ class UserScope(Base):
 
 class UserGroupScope(Base):
     __tablename__ = "user_group_scope"
-    __table_args__ = (UniqueConstraint("group_id", "scope", "scope", "namespace_id"),)
+    # See UserScope: one row per exact grant, NULL-safe.
+    __table_args__ = (
+        UniqueConstraint(
+            "group_id",
+            "scope",
+            "namespace_group",
+            "namespace_id",
+            name="uq_user_group_scope_grant",
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
 
     group_perm_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     group_id: Mapped[int] = mapped_column(
