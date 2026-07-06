@@ -74,6 +74,17 @@ def _get_path_hash_pairs(
                 )
             ),
         )
+        # Only set versions valid at valid_at: deprecated versions would
+        # otherwise re-join every member once per historical membership.
+        .filter(
+            models.GeoSetVersion.valid_from <= valid_at,
+            (
+                or_(
+                    models.GeoSetVersion.valid_to.is_(None),
+                    models.GeoSetVersion.valid_to >= valid_at,
+                )
+            ),
+        )
     )
 
     log.debug("Querying")
@@ -120,7 +131,17 @@ def __get_paths(
                 (
                     or_(
                         models.GeoVersion.valid_to.is_(None),
-                        models.GeoVersion.valid_to > valid_at,
+                        models.GeoVersion.valid_to >= valid_at,
+                    )
+                ),
+            )
+            # Same set-version window and boundary as __get_path_hash_pairs.
+            .filter(
+                models.GeoSetVersion.valid_from <= valid_at,
+                (
+                    or_(
+                        models.GeoSetVersion.valid_to.is_(None),
+                        models.GeoSetVersion.valid_to >= valid_at,
                     )
                 ),
             )

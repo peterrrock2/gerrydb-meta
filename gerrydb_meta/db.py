@@ -27,4 +27,18 @@ else:
     ogr2ogr_db_config = f"PG:{db_url}"
 
 log.debug("Using database URL: %s", db_url)
-Session = sessionmaker(create_engine(db_url))
+
+_session_factory = None
+
+
+def __getattr__(name):
+    # Lazy Session: the API workers import this module for db_url but use
+    # their own pooled engine; building another engine at import time was
+    # pure waste. Admin/CLI consumers keep `from gerrydb_meta.db import
+    # Session` working, paying for the engine only when they use it.
+    if name == "Session":
+        global _session_factory
+        if _session_factory is None:
+            _session_factory = sessionmaker(create_engine(db_url))
+        return _session_factory
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
