@@ -8,7 +8,7 @@ from http import HTTPStatus
 from typing import Union
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from google.api_core.exceptions import GoogleAPIError
 from google.auth.exceptions import GoogleAuthError
@@ -22,6 +22,7 @@ from gerrydb_meta import crud, models, schemas
 from gerrydb_meta.api import render_cache
 from gerrydb_meta.api.base import (
     add_etag,
+    check_namespaced_etag,
     geo_set_from_paths,
     geo_refs_from_paths,
 )
@@ -126,6 +127,7 @@ def all_graphs(
     namespace: str,
     db: Session = Depends(get_db),
     scopes: ScopeManager = Depends(get_scopes),
+    if_none_match: str | None = Header(default=None),
 ):
     graph_namespace_obj = crud.namespace.get(db=db, path=namespace)
     if graph_namespace_obj is None or not scopes.can_read_in_namespace(graph_namespace_obj):
@@ -136,8 +138,10 @@ def all_graphs(
                 "sufficient permissions to read data in this namespace."
             ),
         )
+    etag = check_namespaced_etag(
+        db=db, crud_obj=crud.graph, namespace=graph_namespace_obj, header=if_none_match
+    )
     graph_objs = crud.graph.all(db=db, namespace=graph_namespace_obj)
-    etag = crud.graph.etag(db, graph_namespace_obj)
     add_etag(response, etag)
     return [schemas.GraphMeta.from_attributes(graph_obj) for graph_obj in graph_objs]
 
@@ -154,6 +158,7 @@ def get_graph(
     path: str,
     db: Session = Depends(get_db),
     scopes: ScopeManager = Depends(get_scopes),
+    if_none_match: str | None = Header(default=None),
 ):
     """
     Returns a GraphMeta object containing information about a graph, but not the
@@ -181,7 +186,9 @@ def get_graph(
             detail=f"Graph not found in namespace.",
         )
 
-    etag = crud.graph.etag(db, namespace_obj)
+    etag = check_namespaced_etag(
+        db=db, crud_obj=crud.graph, namespace=namespace_obj, header=if_none_match
+    )
     add_etag(response, etag)
     return schemas.GraphMeta.from_attributes(graph_obj)
 
@@ -241,7 +248,7 @@ def render_graph(
                 cached_path,
                 media_type=GPKG_MEDIA_TYPE,
                 headers={
-                    "ETag": etag.hex,
+                    "ETag": f'"{etag}"',
                     "X-GerryDB-Graph-Render-ID": cached_render_meta.render_id.hex,
                     "Content-Encoding": "identity",
                 },
@@ -351,7 +358,7 @@ def render_graph(
         cached_path,
         media_type=GPKG_MEDIA_TYPE,
         headers={
-            "ETag": etag.hex,
+            "ETag": f'"{etag}"',
             "X-GerryDB-Graph-Render-ID": render_uuid.hex,
             "Content-Encoding": "identity",
         },

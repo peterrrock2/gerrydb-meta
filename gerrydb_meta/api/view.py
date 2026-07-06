@@ -7,7 +7,7 @@ from datetime import timedelta
 from http import HTTPStatus
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from google.api_core.exceptions import GoogleAPIError
 from google.auth.exceptions import GoogleAuthError
@@ -20,7 +20,7 @@ from gerrydb_meta.api import render_cache
 from uvicorn.config import logger as log
 
 from gerrydb_meta import crud, models, schemas
-from gerrydb_meta.api.base import add_etag, namespace_with_read, parse_path
+from gerrydb_meta.api.base import add_etag, check_namespaced_etag, namespace_with_read, parse_path
 from gerrydb_meta.api.deps import (
     can_read_localities,
     get_db,
@@ -133,6 +133,7 @@ def get_view(
     path: str,
     db: Session = Depends(get_db),
     scopes: ScopeManager = Depends(get_scopes),
+    if_none_match: str | None = Header(default=None),
 ):
     """
     Returns a ViewMeta object containing information about a view, but not the
@@ -155,7 +156,9 @@ def get_view(
             detail=f"View not found in namespace.",
         )
 
-    etag = crud.view.etag(db, view_namespace_obj)
+    etag = check_namespaced_etag(
+        db=db, crud_obj=crud.view, namespace=view_namespace_obj, header=if_none_match
+    )
     add_etag(response, etag)
     return schemas.ViewMeta.from_attributes(view_obj)
 
@@ -171,6 +174,7 @@ def all_views(
     namespace: str,
     db: Session = Depends(get_db),
     scopes: ScopeManager = Depends(get_scopes),
+    if_none_match: str | None = Header(default=None),
 ):
     view_namespace_obj = crud.namespace.get(db=db, path=namespace)
     if view_namespace_obj is None or not scopes.can_read_in_namespace(view_namespace_obj):
@@ -183,7 +187,9 @@ def all_views(
         )
 
     view_objs = crud.view.all(db=db, namespace=view_namespace_obj)
-    etag = crud.view.etag(db, view_namespace_obj)
+    etag = check_namespaced_etag(
+        db=db, crud_obj=crud.view, namespace=view_namespace_obj, header=if_none_match
+    )
     add_etag(response, etag)
     return [schemas.ViewMeta.from_attributes(view_obj) for view_obj in view_objs]
 
@@ -243,7 +249,7 @@ def render_view(
                 cached_path,
                 media_type=GPKG_MEDIA_TYPE,
                 headers={
-                    "ETag": etag.hex,
+                    "ETag": f'"{etag}"',
                     "X-GerryDB-View-Render-ID": cached_render_meta.render_id.hex,
                     "Content-Encoding": "identity",
                 },
@@ -354,7 +360,7 @@ def render_view(
         cached_path,
         media_type=GPKG_MEDIA_TYPE,
         headers={
-            "ETag": etag.hex,
+            "ETag": f'"{etag}"',
             "X-GerryDB-View-Render-ID": render_uuid.hex,
             "Content-Encoding": "identity",
         },
