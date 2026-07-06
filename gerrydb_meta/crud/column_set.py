@@ -46,11 +46,17 @@ class CRColumnSet(NamespacedCRBase[models.ColumnSet, schemas.ColumnSetCreate]):
                 )
             db.refresh(column_set)
 
+            path_list = list(obj_in.columns)
+            ref_by_path = {
+                ref.path: ref
+                for ref in crud_column.get_ref_bulk(
+                    db,
+                    namespaced_paths=[(namespace.path, p) for p in path_list],
+                )
+            }
             refs = []
-            path_list = []
-            for column_path in obj_in.columns:
-                path_list.append(column_path)
-                ref_obj = crud_column.get_ref(db, path=column_path, namespace=namespace)
+            for column_path in path_list:
+                ref_obj = ref_by_path.get(normalize_path(column_path))
                 if ref_obj is None:
                     raise CreateValueError(f"Failed to resolve column '{column_path}'.")
                 refs.append(ref_obj)

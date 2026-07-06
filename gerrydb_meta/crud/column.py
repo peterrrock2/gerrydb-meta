@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Collection, Tuple
 
-from sqlalchemy import exc, select, text
+from sqlalchemy import exc, select, text, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from uvicorn.config import logger as log
@@ -285,6 +285,24 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
         ref = self.get_ref(db, path=path, namespace=namespace)
         return None if ref is None else ref.column
 
+    def get_ref_bulk(
+        self, db: Session, *, namespaced_paths: list[tuple[str, str]]
+    ) -> list[models.ColumnRef]:
+        """Retrieves column references by (namespace path, column path) pairs."""
+        return (
+            db.query(models.ColumnRef)
+            .join(
+                models.Namespace,
+                models.ColumnRef.namespace_id == models.Namespace.namespace_id,
+            )
+            .filter(
+                tuple_(models.Namespace.path, models.ColumnRef.path).in_(
+                    [(ns, normalize_path(path)) for ns, path in namespaced_paths]
+                )
+            )
+            .all()
+        )
+
     def get_global_ref(
         self, db: Session, *, path: tuple[str, str], namespace: models.Namespace
     ) -> models.DataColumn | None:
@@ -491,52 +509,99 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
         hash_hi: int,
         hash_lo: int,
         readable_namespace_ids: Collection[int],
+        preferred_namespace_id: int | None = None,
     ) -> models.DataColumn | None:
-        """Finds a readable column whose name/alias and content fingerprint
-        match a candidate upload over (locality, layer).
+        """Finds a readable column matching one candidate (see find_duplicates)."""
+        return self.find_duplicates(
+            db,
+            candidates=[
+                {
+                    "name": name,
+                    "locality": locality_path,
+                    "layer": layer_path,
+                    "hash_hi": hash_hi,
+                    "hash_lo": hash_lo,
+                }
+            ],
+            readable_namespace_ids=readable_namespace_ids,
+            preferred_namespace_id=preferred_namespace_id,
+        )[0]
+
+    def find_duplicates(
+        self,
+        db: Session,
+        *,
+        candidates: list[dict],
+        readable_namespace_ids: Collection[int],
+        preferred_namespace_id: int | None = None,
+    ) -> list[models.DataColumn | None]:
+        """Finds readable columns whose name/alias and content fingerprint
+        match candidate uploads over (locality, layer), one batched query.
 
         The fingerprint is compared against the stored hash for the current
         set version of (locality, layer) in the matching column's own
         namespace; name matching plus geo-set context makes accidental
-        collisions (e.g. degenerate all-zero columns) implausible.
+        collisions (e.g. degenerate all-zero columns) implausible. Ties are
+        deterministic: a match in `preferred_namespace_id` wins, then the
+        lowest col_id.
         """
-        canon = normalize_path(name)
-        refs = (
-            db.query(models.ColumnRef)
-            .filter(
-                models.ColumnRef.path == canon,
-                models.ColumnRef.namespace_id.in_(readable_namespace_ids),
-            )
-            .all()
+        if not candidates or not readable_namespace_ids:
+            return [None] * len(candidates)
+        rows = db.execute(
+            text(
+                "WITH cand AS ("
+                "  SELECT * FROM unnest("
+                "    CAST(:idxs AS integer[]), CAST(:paths AS text[]),"
+                "    CAST(:locs AS text[]), CAST(:layers AS text[]),"
+                "    CAST(:his AS bigint[]), CAST(:los AS bigint[])"
+                "  ) AS t(idx, path, loc, layer, hash_hi, hash_lo)"
+                ") "
+                "SELECT DISTINCT ON (cand.idx) cand.idx, col.col_id "
+                f"FROM cand "
+                f"JOIN {models.SCHEMA}.column_ref r "
+                "  ON r.path = cand.path "
+                " AND r.namespace_id = ANY(CAST(:readable AS integer[])) "
+                f'JOIN {models.SCHEMA}."column" col ON col.col_id = r.col_id '
+                f"JOIN {models.SCHEMA}.column_value_count c ON c.col_id = col.col_id "
+                f"JOIN {models.SCHEMA}.geo_set_version sv "
+                "  ON sv.set_version_id = c.set_version_id AND sv.valid_to IS NULL "
+                f"JOIN {models.SCHEMA}.locality_ref lr "
+                "  ON lr.loc_id = sv.loc_id AND lr.path = cand.loc "
+                f"JOIN {models.SCHEMA}.geo_layer gl "
+                "  ON gl.layer_id = sv.layer_id AND gl.path = cand.layer "
+                # The hash must come from the set version in the column's OWN
+                # namespace; matching against another namespace's set version
+                # would compare unrelated member sets.
+                " AND gl.namespace_id = col.namespace_id "
+                "WHERE c.value_hash_hi = cand.hash_hi AND c.value_hash_lo = cand.hash_lo "
+                "ORDER BY cand.idx, (col.namespace_id = :preferred) DESC, col.col_id"
+            ),
+            {
+                "idxs": list(range(len(candidates))),
+                "paths": [normalize_path(c["name"]) for c in candidates],
+                "locs": [normalize_path(c["locality"]) for c in candidates],
+                "layers": [normalize_path(c["layer"]) for c in candidates],
+                "his": [c["hash_hi"] for c in candidates],
+                "los": [c["hash_lo"] for c in candidates],
+                "readable": list(readable_namespace_ids),
+                "preferred": preferred_namespace_id,
+            },
+        ).all()
+        col_ids = {row.col_id for row in rows}
+        cols_by_id = (
+            {
+                col.col_id: col
+                for col in db.query(models.DataColumn).filter(
+                    models.DataColumn.col_id.in_(col_ids)
+                )
+            }
+            if col_ids
+            else {}
         )
-        seen_cols = set()
-        for ref in refs:
-            col = ref.column
-            if col.col_id in seen_cols:
-                continue
-            seen_cols.add(col.col_id)
-            row = db.execute(
-                text(
-                    f"SELECT c.value_hash_hi, c.value_hash_lo "
-                    f"FROM {models.SCHEMA}.column_value_count c "
-                    f"JOIN {models.SCHEMA}.geo_set_version sv "
-                    "   ON sv.set_version_id = c.set_version_id "
-                    f"JOIN {models.SCHEMA}.locality_ref lr ON lr.loc_id = sv.loc_id "
-                    f"JOIN {models.SCHEMA}.geo_layer gl ON gl.layer_id = sv.layer_id "
-                    "WHERE c.col_id = :col_id AND sv.valid_to IS NULL "
-                    "  AND lr.path = :loc AND gl.path = :layer "
-                    "  AND gl.namespace_id = :col_ns"
-                ),
-                {
-                    "col_id": col.col_id,
-                    "loc": normalize_path(locality_path),
-                    "layer": normalize_path(layer_path),
-                    "col_ns": col.namespace_id,
-                },
-            ).first()
-            if row is not None and row[0] == hash_hi and row[1] == hash_lo:
-                return col
-        return None
+        matches: list[models.DataColumn | None] = [None] * len(candidates)
+        for row in rows:
+            matches[row.idx] = cols_by_id[row.col_id]
+        return matches
 
     def patch(
         self,

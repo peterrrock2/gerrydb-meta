@@ -39,24 +39,31 @@ def preflight_columns(
             detail=namespace_write_error_msg("column preflight"),
         )
     readable = _readable_namespace_ids(db, scopes)
-    results = []
-    for cand in body.candidates:
-        col = crud.column.find_duplicate(
-            db,
+    matches = crud.column.find_duplicates(
+        db,
+        candidates=[
+            {
+                "name": cand.name,
+                "locality": cand.locality,
+                "layer": cand.layer,
+                "hash_hi": cand.hash_hi,
+                "hash_lo": cand.hash_lo,
+            }
+            for cand in body.candidates
+        ],
+        readable_namespace_ids=readable,
+        # Deterministic tie-break: a same-namespace duplicate beats any
+        # cross-namespace one.
+        preferred_namespace_id=namespace_obj.namespace_id,
+    )
+    results = [
+        schemas.ColumnDuplicateMatch(
             name=cand.name,
-            locality_path=cand.locality,
-            layer_path=cand.layer,
-            hash_hi=cand.hash_hi,
-            hash_lo=cand.hash_lo,
-            readable_namespace_ids=readable,
+            namespace=None if col is None else col.namespace.path,
+            path=None if col is None else col.canonical_ref.path,
         )
-        results.append(
-            schemas.ColumnDuplicateMatch(
-                name=cand.name,
-                namespace=None if col is None else col.namespace.path,
-                path=None if col is None else col.canonical_ref.path,
-            )
-        )
+        for cand, col in zip(body.candidates, matches)
+    ]
     return schemas.ColumnPreflightResponse(results=results)
 
 

@@ -206,7 +206,22 @@ def from_resource_paths(
     obj_by_path = {}
     for endpoint, endpoint_paths in paths_by_endpoint.items():
         endpoint_crud = ENDPOINT_TO_CRUD[endpoint]
-        if hasattr(endpoint_crud, "get_bulk"):
+        if not follow_refs and hasattr(endpoint_crud, "get_ref_bulk"):
+            # Bulk reference lookup (columns): one query instead of one per path.
+            objs = endpoint_crud.get_ref_bulk(db, namespaced_paths=endpoint_paths)
+            if len(objs) < len(endpoint_paths):
+                found = {(obj.namespace.path, obj.path) for obj in objs}
+                missing = set(endpoint_paths) - found
+                formatted_missing = [
+                    f"/{endpoint}/{miss_ns}/{miss_path}" for miss_ns, miss_path in missing
+                ]
+                raise HTTPException(
+                    status_code=HTTPStatus.NOT_FOUND,
+                    detail=f"Not found: {', '.join(formatted_missing)}",
+                )
+            for obj in objs:
+                obj_by_path[(endpoint, obj.namespace.path, obj.path)] = obj
+        elif hasattr(endpoint_crud, "get_bulk"):
             # Get the objects in bulk by path; fail if any are unknown.
             objs = endpoint_crud.get_bulk(db, namespaced_paths=endpoint_paths)
             if len(objs) < len(parsed_paths):
