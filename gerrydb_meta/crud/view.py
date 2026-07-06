@@ -22,6 +22,7 @@ from sqlalchemy import (
     union,
 )
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.sql import column as sql_column, table as sql_table
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import column
@@ -824,7 +825,9 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             )
         ]
 
-    def render(self, db: Session, *, view: models.View) -> ViewRenderContext:
+    def render(
+        self, db: Session, *, view: models.View, include_plans: bool = False
+    ) -> ViewRenderContext:
         """Generates queries to retrieve view data.
 
         Used for bulk exports via `ogr2ogr`.
@@ -944,6 +947,10 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
 
         pivot_query = (
             select(
+                # geo_id lets the plan/edge queries join the materialized
+                # table instead of re-translating ids through the full
+                # geography table.
+                geo_sub.c.geo_id,
                 geo_sub.c.path,
                 geo_sub.c.geography,
                 geo_sub.c.internal_point,
@@ -987,9 +994,21 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         full_geo_query = f"SELECT path, geography, {quoted_aliases} FROM {render_table}"
         full_internal_point_query = f"SELECT path, internal_point FROM {render_table}"
 
-        plan_labels, plan_assignments = self._plans(
-            db, view, view_set_version_ids=view_set_version_ids
+        render_tbl = sql_table(
+            f"render_{render_id.hex}",
+            sql_column("geo_id"),
+            sql_column("path"),
+            schema=models.SCHEMA,
         )
+        if include_plans:
+            plan_labels, plan_assignments = self._plans(
+                db, view, render_tbl, view_set_version_ids=view_set_version_ids
+            )
+        else:
+            # Plans are opt-in: every plan on the set version costs a full
+            # member-sized stream into the GeoPackage, so renders that do not
+            # ask for plans do not pay for them.
+            plan_labels, plan_assignments = [], None
         geo_meta_ids, geo_meta = self._geo_meta(db, view, view_set_version_ids=view_set_version_ids)
         geo_valid_from_dates = dict(
             db.execute(text(f"SELECT path, valid_from FROM {render_table}")).all()
@@ -1000,7 +1019,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
             columns=columns,
             plan_labels=plan_labels,
             plan_assignments=plan_assignments,
-            graph_edges=self._graph_edges(db, view),
+            graph_edges=self._graph_edges(db, view, render_tbl),
             geo_meta=geo_meta,
             geo_meta_ids=geo_meta_ids,
             geo_valid_from_dates=geo_valid_from_dates,
@@ -1057,6 +1076,7 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         self,
         db: Session,
         view: models.View,
+        render_tbl,
         view_set_version_ids: list[int] | None = None,
     ) -> tuple[list[str], Sequence | None]:
         """Gets plan labels and assignments associated with a view.
@@ -1121,51 +1141,50 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 .subquery()
             )
 
-        geo_sub = select(models.Geography.geo_id, models.Geography.path).subquery()
-        members_sub = (
-            select(models.GeoSetMember.geo_id)
-            .filter(models.GeoSetMember.set_version_id.in_(view_set_version_ids))
-            .subquery()
-        )
         plan_cols = [
             plan_sub.c.assignment.label(plan_label)
             for plan_sub, plan_label in zip(plan_subs, plan_labels)
         ]
-        plan_assignment_query = (
-            select(members_sub.c.geo_id, geo_sub.c.path, *plan_cols)
-            .select_from(members_sub)
-            .join(geo_sub, geo_sub.c.geo_id == members_sub.c.geo_id)
-        )
+        # Join against the materialized render table: it already holds one
+        # (geo_id, path) row per rendered geography. The old shape joined an
+        # UNFILTERED geography projection, hashing all ~9M rows per render.
+        # For duplicate paths across namespaces the render table carries the
+        # lowest geo_id, so a plan keyed to the other namespace's geography
+        # does not attach (matching the geometry pick).
+        plan_assignment_query = select(
+            render_tbl.c.geo_id, render_tbl.c.path, *plan_cols
+        ).select_from(render_tbl)
         for plan_sub in plan_subs:
             plan_assignment_query = plan_assignment_query.outerjoin(
                 plan_sub,
-                plan_sub.c.geo_id == members_sub.c.geo_id,
+                plan_sub.c.geo_id == render_tbl.c.geo_id,
             )
         plan_assignments = _stream_rows(db, plan_assignment_query)
 
         return plan_labels, plan_assignments
 
-    def _graph_edges(self, db: Session, view: models.View) -> Sequence | None:
-        """Gets graph edges by path, if applicable."""
+    def _graph_edges(self, db: Session, view: models.View, render_tbl) -> Sequence | None:
+        """Gets graph edges by path, if applicable.
+
+        Edge endpoints resolve through the materialized render table (edges
+        are validated as set members at graph create). The old shape joined
+        two unfiltered geography projections, hashing ~9M rows twice per
+        render just to translate ids to paths.
+        """
         if view.graph_id is None:  # pragma: no cover
             return None
 
-        path_sub_1 = select(models.Geography.geo_id, models.Geography.path).subquery()
-        path_sub_2 = select(models.Geography.geo_id, models.Geography.path).subquery()
+        r1 = render_tbl.alias("r1")
+        r2 = render_tbl.alias("r2")
         graph_edges_query = (
             select(
-                path_sub_1.c.path.label("path_1"),
-                path_sub_2.c.path.label("path_2"),
+                r1.c.path.label("path_1"),
+                r2.c.path.label("path_2"),
                 models.GraphEdge.weights,
             )
-            .join(
-                path_sub_1,
-                path_sub_1.c.geo_id == models.GraphEdge.geo_id_1,
-            )
-            .join(
-                path_sub_2,
-                path_sub_2.c.geo_id == models.GraphEdge.geo_id_2,
-            )
+            .select_from(models.GraphEdge)
+            .join(r1, r1.c.geo_id == models.GraphEdge.geo_id_1)
+            .join(r2, r2.c.geo_id == models.GraphEdge.geo_id_2)
             .where(
                 models.GraphEdge.graph_id == view.graph_id,
             )

@@ -402,7 +402,7 @@ def test_good_render_view(db, me_2010_gdf, me_2010_nx_graph, me_2010_plan_dict, 
     # For geo comparisons later
     view.proj = "epsg:4269"
 
-    view_render_ctx = crud.view.render(db=db, view=view)
+    view_render_ctx = crud.view.render(db=db, view=view, include_plans=True)
     db.commit()
     db.flush()
 
@@ -604,7 +604,7 @@ def test_good_render_view_default_projection(
         graph=graph,
     )
 
-    view_render_ctx = crud.view.render(db=db, view=view)
+    view_render_ctx = crud.view.render(db=db, view=view, include_plans=True)
     db.commit()
     db.flush()
 

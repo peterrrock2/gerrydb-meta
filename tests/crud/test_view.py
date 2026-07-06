@@ -560,7 +560,7 @@ def test_view_render(db_with_meta):
         assignments={geo[0][0]: "1", geo[1][0]: "2"},
     )
 
-    view_render_context = crud.view.render(db=db, view=view)
+    view_render_context = crud.view.render(db=db, view=view, include_plans=True)
 
     assert set(view_render_context.columns.keys()) == set(["mayor", "population"])
     assert view_render_context.plan_labels == ["atlantis_plan"]

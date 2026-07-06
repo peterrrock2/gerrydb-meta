@@ -204,6 +204,7 @@ def render_view(
     *,
     namespace: str,
     path: str,
+    include_plans: bool = False,
     db: Session = Depends(get_db),
     db_config: str = Depends(get_ogr2ogr_db_config),
     user: models.User = Depends(get_user),
@@ -240,7 +241,11 @@ def render_view(
             storage_credentials = storage_client = None
     has_gcs_context = storage_client is not None
 
-    cached_render_meta = crud.view.get_cached_render(db=db, view=view_obj)
+    # The render cache holds the canonical (plan-less) shape; plan-bearing
+    # requests re-render and are not cached.
+    cached_render_meta = (
+        None if include_plans else crud.view.get_cached_render(db=db, view=view_obj)
+    )
     if cached_render_meta is not None and not has_gcs_context:
         cached_path = render_cache.cached_file(cached_render_meta.path)
         if cached_path is not None:
@@ -284,7 +289,7 @@ def render_view(
 
     log.debug("BEFORE RENDER")
     start = time.perf_counter()
-    render_ctx = crud.view.render(db=db, view=view_obj)
+    render_ctx = crud.view.render(db=db, view=view_obj, include_plans=include_plans)
     # ogr2ogr connects separately: the materialized render table must be
     # committed before it runs.
     db.commit()
@@ -315,13 +320,14 @@ def render_view(
             blob.content_encoding = "gzip"
             blob.metadata = {"gerrydb-view-render-id": render_uuid.hex}
             blob.upload_from_filename(gzipped_path, content_type=GPKG_MEDIA_TYPE)
-            crud.view.cache_render(
-                db=db,
-                view=view_obj,
-                created_by=user,
-                render_id=render_uuid,
-                path=f"gs://{bucket_name}/{blob_path}",
-            )
+            if not include_plans:
+                crud.view.cache_render(
+                    db=db,
+                    view=view_obj,
+                    created_by=user,
+                    render_id=render_uuid,
+                    path=f"gs://{bucket_name}/{blob_path}",
+                )
 
             redirect_url = blob.generate_signed_url(
                 version="v4",
@@ -348,13 +354,14 @@ def render_view(
             )
     log.debug("Returning GPKG response")
     cached_path = render_cache.store(render_uuid.hex, gpkg_path)
-    crud.view.cache_render(
-        db=db,
-        view=view_obj,
-        created_by=user,
-        render_id=render_uuid,
-        path=str(cached_path),
-    )
+    if not include_plans:
+        crud.view.cache_render(
+            db=db,
+            view=view_obj,
+            created_by=user,
+            render_id=render_uuid,
+            path=str(cached_path),
+        )
     # "identity" makes GZipMiddleware pass the GeoPackage through uncompressed.
     return FileResponse(
         cached_path,
