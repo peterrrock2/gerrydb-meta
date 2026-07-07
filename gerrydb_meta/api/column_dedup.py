@@ -93,6 +93,16 @@ def create_column_reference(
     col = crud.column.get(db, path=body.target_path, namespace=target_ns)
     if col is None:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="Target column not found.")
+    if body.validate_paths:
+        missing = crud.column.missing_value_paths(db, col=col, namespace=namespace_obj)
+        if missing:
+            raise HTTPException(
+                status_code=HTTPStatus.CONFLICT,
+                detail=(
+                    f"Target column has current values on geography paths missing "
+                    f"from namespace '{namespace_obj.path}' (sample: {missing})."
+                ),
+            )
     try:
         crud.column.create_reference(
             db, path=body.path, namespace=namespace_obj, col=col, obj_meta=obj_meta

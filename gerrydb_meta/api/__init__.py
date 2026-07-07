@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from gerrydb_meta import crud, schemas
 from gerrydb_meta.api import (
+    column,
     column_dedup,
     column_value,
     geo_import,
@@ -41,7 +42,7 @@ api_router.include_router(graph.router, prefix="/graphs", tags=["graphs"])
 
 
 api_router.include_router(
-    NamespacedObjectApi(
+    column.ColumnApi(
         crud=crud.column,
         get_schema=schemas.Column,
         create_schema=schemas.ColumnCreate,
