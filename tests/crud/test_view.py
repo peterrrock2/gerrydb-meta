@@ -1574,3 +1574,174 @@ def test_view_create_historical_valid_at_uses_scan_default_slack(db_with_meta):
         layer=geo_layer,
     )
     assert view.num_geos == 2
+
+
+def test_view_create_clone_ref_pins_and_survives_repoint(db_with_meta):
+    """A view over a target-namespace clone ref resolves the source column's
+    sets (creation succeeds pre-materialization), and repointing the ref
+    afterwards does not move the existing template version's resolution."""
+    from gerrydb_meta.crud.view import _view_columns
+
+    db, meta = db_with_meta
+
+    ns = make_atlantis_ns(db, meta)
+    ns2, _ = crud.namespace.create(
+        db=db,
+        obj_in=schemas.NamespaceCreate(
+            path="atlantis_source",
+            description="A legendary city",
+            public=True,
+        ),
+        obj_meta=meta,
+    )
+
+    loc, _ = crud.locality.create(
+        db=db,
+        obj_in=schemas.LocalityCreate(
+            canonical_path="atlantis",
+            parent_path=None,
+            name="Atlantis",
+            aliases=None,
+        ),
+        obj_meta=meta,
+    )
+
+    geos_by_ns = {}
+    layers_by_ns = {}
+    for namespace in (ns, ns2):
+        geo_import, _ = crud.geo_import.create(db=db, obj_meta=meta, namespace=namespace)
+        geos, _ = crud.geography.create_bulk(
+            db=db,
+            objs_in=[
+                schemas.GeographyCreate(path="central_atlantis", geography=None, internal_point=None),
+                schemas.GeographyCreate(path="western_atlantis", geography=None, internal_point=None),
+            ],
+            obj_meta=meta,
+            geo_import=geo_import,
+            namespace=namespace,
+        )
+        layer, _ = crud.geo_layer.create(
+            db=db,
+            obj_in=schemas.GeoLayerCreate(
+                path="atlantis_blocks",
+                description="The legendary city of Atlantis",
+                source_url="https://en.wikipedia.org/wiki/Atlantis",
+            ),
+            obj_meta=meta,
+            namespace=namespace,
+        )
+        crud.geo_layer.map_locality(
+            db=db,
+            layer=layer,
+            locality=loc,
+            geographies=[g[0] for g in geos],
+            obj_meta=meta,
+        )
+        geos_by_ns[namespace.path] = geos
+        layers_by_ns[namespace.path] = layer
+
+    # Values live only in the source namespace.
+    pop_col, _ = crud.column.create(
+        db=db,
+        obj_in=schemas.ColumnCreate(
+            canonical_path="population",
+            description="the population of the city",
+            kind=ColumnKind.COUNT,
+            type=ColumnType.INT,
+        ),
+        obj_meta=meta,
+        namespace=ns2,
+    )
+    crud.column.set_values(
+        db=db,
+        col=pop_col,
+        values=[
+            (geos_by_ns["atlantis_source"][0][0], 1000),
+            (geos_by_ns["atlantis_source"][1][0], 2000),
+        ],
+        obj_meta=meta,
+    )
+
+    clone_ref, _ = crud.column.create_reference(
+        db=db, path="population", namespace=ns, col=pop_col, obj_meta=meta
+    )
+    assert clone_ref.namespace_id == ns.namespace_id
+
+    view_template, _ = crud.view_template.create(
+        db=db,
+        obj_in=schemas.ViewTemplateCreate(
+            path="clone_template",
+            description="template over a cloned column",
+            members=["population"],
+        ),
+        resolved_members=[clone_ref],
+        obj_meta=meta,
+        namespace=ns,
+    )
+
+    # Creation succeeds even though the values and stats live under the
+    # source namespace's set version, because resolution keys on the pinned
+    # column's namespace rather than the clone ref's.
+    view, _ = crud.view.create(
+        db=db,
+        obj_in=schemas.ViewCreate(
+            path="clone_view",
+            description="view over a cloned column",
+            template="clone_template",
+            locality="atlantis",
+            layer="atlantis_blocks",
+        ),
+        obj_meta=meta,
+        namespace=ns,
+        template=view_template,
+        locality=loc,
+        layer=layers_by_ns["atlantis"],
+    )
+    assert view.num_geos == 2
+    resolved = _view_columns(db, view_template.template_version_id)
+    assert resolved["population"].col_id == pop_col.col_id
+
+    # Simulate materialization's repoint: the clone path now names a new
+    # local column. The existing template version must keep its pin.
+    new_col, _ = crud.column.create(
+        db=db,
+        obj_in=schemas.ColumnCreate(
+            canonical_path="population_materialized",
+            description="locally owned population",
+            kind=ColumnKind.COUNT,
+            type=ColumnType.INT,
+        ),
+        obj_meta=meta,
+        namespace=ns,
+    )
+    crud.column.set_values(
+        db=db,
+        col=new_col,
+        values=[
+            (geos_by_ns["atlantis"][0][0], 1111),
+            (geos_by_ns["atlantis"][1][0], 2222),
+        ],
+        obj_meta=meta,
+    )
+    clone_ref.col_id = new_col.col_id
+    db.flush()
+    db.expire(clone_ref)
+
+    resolved_after = _view_columns(db, view_template.template_version_id)
+    assert resolved_after["population"].col_id == pop_col.col_id
+
+    # A template version created after the repoint resolves the new column.
+    post_template, _ = crud.view_template.create(
+        db=db,
+        obj_in=schemas.ViewTemplateCreate(
+            path="post_repoint_template",
+            description="template created after the repoint",
+            members=["population"],
+        ),
+        resolved_members=[clone_ref],
+        obj_meta=meta,
+        namespace=ns,
+    )
+    resolved_post = _view_columns(db, post_template.template_version_id)
+    assert set(resolved_post) == {"population_materialized"}
+    assert resolved_post["population_materialized"].col_id == new_col.col_id

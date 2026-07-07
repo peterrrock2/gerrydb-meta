@@ -463,13 +463,20 @@ class ViewTemplate(ViewTemplateBase):
 
     @classmethod
     def from_attributes(cls, obj: models.ViewTemplateVersion):
-        members = sorted(obj.columns + obj.column_sets, key=lambda obj: obj.order)
+        # direct=False rows are set-member pins for data resolution, not
+        # authored members; the authored list shows the set itself.
+        members = sorted(
+            [m for m in obj.columns if m.direct] + obj.column_sets,
+            key=lambda obj: obj.order,
+        )
 
         new_members = []
 
         for member in members:
-            if isinstance(member.member, models.ColumnRef):
-                new_members.append(Column.from_attributes(member.member.column))
+            if isinstance(member, models.ViewTemplateColumnMember):
+                # Serialize the pinned column, not the ref's current target:
+                # display must match what this version's views resolve.
+                new_members.append(Column.from_attributes(member.column))
             else:
                 new_members.append(ColumnSet.from_attributes(member.member))
 

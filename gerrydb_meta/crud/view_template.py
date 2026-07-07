@@ -85,30 +85,31 @@ class CRViewTemplate(NamespacedCRBase[models.ViewTemplate, schemas.ViewTemplateC
                             f"the column list or in the column set: {member.path}"
                         )
                     found_columns_paths.update(canon_paths)
+                    # col_id is pinned at creation: data resolution must not
+                    # follow the ref later, or repointing it (materialization)
+                    # would retroactively change this version's views.
                     db.add(
                         models.ViewTemplateColumnMember(
                             template_version_id=template_version.template_version_id,
                             ref_id=member.ref_id,
                             order=idx,
+                            col_id=member.col_id,
+                            direct=True,
                         )
                     )
                 else:
-                    col_ids = list(
-                        item[0]
-                        for item in db.query(models.DataColumn.col_id)
+                    set_members = (
+                        db.query(models.ColumnSetMember.ref_id, models.ColumnRef.col_id)
                         .join(
                             models.ColumnRef,
-                            models.ColumnRef.col_id == models.DataColumn.col_id,
-                        )
-                        .join(
-                            models.ColumnSetMember,
-                            models.ColumnSetMember.ref_id == models.ColumnRef.ref_id,
+                            models.ColumnRef.ref_id == models.ColumnSetMember.ref_id,
                         )
                         .filter(
                             models.ColumnSetMember.set_id == member.set_id,
                         )
                         .all()
                     )
+                    col_ids = [row.col_id for row in set_members]
 
                     canon_paths = set(
                         item[0]
@@ -133,6 +134,20 @@ class CRViewTemplate(NamespacedCRBase[models.ViewTemplate, schemas.ViewTemplateC
                             order=idx,
                         )
                     )
+                    # Pin each set member's current column too (direct=False:
+                    # hidden from the serialized member list, read by data
+                    # resolution). Column sets themselves stay unpinned, so a
+                    # version created later re-resolves the set fresh.
+                    for row in set_members:
+                        db.add(
+                            models.ViewTemplateColumnMember(
+                                template_version_id=template_version.template_version_id,
+                                ref_id=row.ref_id,
+                                order=idx,
+                                col_id=row.col_id,
+                                direct=False,
+                            )
+                        )
 
             etag = self._update_etag(db, namespace)
 

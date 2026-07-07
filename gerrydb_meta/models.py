@@ -856,11 +856,20 @@ class ViewTemplateColumnMember(Base):
     )
     ref_id: Mapped[int] = mapped_column(Integer, ForeignKey("column_ref.ref_id"), primary_key=True)
     order: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The column the ref resolved to when this template version was created.
+    # Data resolution reads this pin, never the ref: refs can be repointed
+    # (column materialization), and views must keep serving the columns their
+    # template resolved at creation. Rows exist for every column the version
+    # uses; `direct` is False for rows synthesized from column-set members,
+    # which serialization hides (the authored member list shows the set).
+    col_id: Mapped[int] = mapped_column(Integer, ForeignKey("column.col_id"), nullable=False)
+    direct: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
     template_version: Mapped[ViewTemplate] = relationship(
         "ViewTemplateVersion", back_populates="columns"
     )
     member: Mapped[ColumnRef] = relationship("ColumnRef", lazy="joined")
+    column: Mapped[DataColumn] = relationship("DataColumn", lazy="joined")
 
 
 class ViewTemplateColumnSetMember(Base):

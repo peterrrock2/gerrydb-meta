@@ -19,7 +19,6 @@ from sqlalchemy import (
     or_,
     select,
     text,
-    union,
 )
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql import column as sql_column, table as sql_table
@@ -51,32 +50,21 @@ GRAPH_BATCH_SIZE = 100000
 
 
 def _view_columns(db: Session, template_version_id: int) -> dict[str, models.DataColumn]:
-    """Gets the unique columns associated with a `ViewTemplateVersion` by canonical path."""
-    column_ref_ids = select(models.ViewTemplateColumnMember.ref_id).filter(
-        models.ViewTemplateColumnMember.template_version_id == template_version_id
-    )
-    column_set_ids = select(models.ViewTemplateColumnSetMember.set_id).filter(
-        models.ViewTemplateColumnSetMember.template_version_id == template_version_id
-    )
-    column_set_ref_ids = select(models.ColumnSetMember.ref_id).filter(
-        models.ColumnSetMember.set_id.in_(column_set_ids)
-    )
+    """Gets the unique columns associated with a `ViewTemplateVersion` by canonical path.
 
-    column_ids_with_paths = db.execute(
-        select(
-            models.ColumnRef.path,
-            models.Namespace.path.label("namespace"),
-            models.ColumnRef.col_id,
-        )
+    Reads the col_ids pinned at template-version creation, never the refs:
+    refs can be repointed (column materialization), and a version's views
+    must keep resolving the columns it pinned.
+    """
+    raw_columns = (
+        db.query(models.DataColumn)
         .join(
-            models.Namespace,
-            models.Namespace.namespace_id == models.ColumnRef.namespace_id,
+            models.ViewTemplateColumnMember,
+            models.ViewTemplateColumnMember.col_id == models.DataColumn.col_id,
         )
-        .where(models.ColumnRef.ref_id.in_(union(column_set_ref_ids, column_ref_ids)))
-    ).all()
-    column_ids = [row.col_id for row in column_ids_with_paths]
-
-    raw_columns = db.query(models.DataColumn).filter(models.DataColumn.col_id.in_(column_ids)).all()
+        .filter(models.ViewTemplateColumnMember.template_version_id == template_version_id)
+        .all()
+    )
 
     # Label columns by canonical path, not the alias the template referenced:
     # rendered column names must not depend on which alias was used.
@@ -180,9 +168,27 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
         template_version_id: int,
     ):
         log.debug("TOP OF GET_ALL_SET_COL_IDS")
+        # Set versions are gathered per namespace OF THE PINNED COLUMN, not of
+        # the ref: a clone ref lives in the view's namespace while its values
+        # (and stats) live under the source column's namespace and sets. The
+        # pinned rows already cover set-derived members, so one query serves
+        # direct and set-based template members alike.
         col_query = (
             db.query(models.GeoSetVersion.set_version_id, models.ColumnRef.path)
-            .select_from(models.GeoSetVersion)
+            .select_from(models.ViewTemplateColumnMember)
+            .filter(models.ViewTemplateColumnMember.template_version_id == template_version_id)
+            .join(
+                models.DataColumn,
+                models.DataColumn.col_id == models.ViewTemplateColumnMember.col_id,
+            )
+            .join(
+                models.ColumnRef,
+                models.ColumnRef.ref_id == models.DataColumn.canonical_ref_id,
+            )
+            .join(
+                models.GeoSetVersion,
+                models.GeoSetVersion.namespace_id == models.DataColumn.namespace_id,
+            )
             .filter(
                 models.GeoSetVersion.valid_from <= valid_at,
                 or_(
@@ -192,60 +198,10 @@ class CRView(NamespacedCRBase[models.View, schemas.ViewCreate]):
                 models.GeoSetVersion.layer_id.in_(available_layer_ids),
                 models.GeoSetVersion.loc_id == loc_id,
             )
-            .join(
-                models.ColumnRef,
-                models.ColumnRef.namespace_id == models.GeoSetVersion.namespace_id,
-            )
-            .join(
-                models.ViewTemplateColumnMember,
-                models.ViewTemplateColumnMember.ref_id == models.ColumnRef.ref_id,
-            )
-            .filter(
-                or_(
-                    models.ViewTemplateColumnMember.template_version_id == template_version_id,
-                )
-            )
         )
 
-        col_set_query = (
-            db.query(models.GeoSetVersion.set_version_id, models.ColumnRef.path)
-            .select_from(models.GeoSetVersion)
-            .filter(
-                models.GeoSetVersion.valid_from <= valid_at,
-                or_(
-                    models.GeoSetVersion.valid_to.is_(None),
-                    models.GeoSetVersion.valid_to >= valid_at,
-                ),
-                models.GeoSetVersion.layer_id.in_(available_layer_ids),
-                models.GeoSetVersion.loc_id == loc_id,
-            )
-            .join(
-                models.ColumnRef,
-                models.ColumnRef.namespace_id == models.GeoSetVersion.namespace_id,
-            )
-            .join(
-                models.ColumnSetMember,
-                models.ColumnSetMember.ref_id == models.ColumnRef.ref_id,
-            )
-            .join(
-                models.ViewTemplateColumnSetMember,
-                models.ViewTemplateColumnSetMember.set_id == models.ColumnSetMember.set_id,
-            )
-            .filter(
-                or_(
-                    models.ViewTemplateColumnSetMember.template_version_id == template_version_id,
-                )
-            )
-        )
-
-        col_results = [(item[0], item[1]) for item in col_query.distinct()]
-        col_set_resuls = [(item[0], item[1]) for item in col_set_query.distinct()]
-
-        log.debug("COL RESULTS: %s", col_results)
-        log.debug("COL SET RESULTS: %s", col_set_resuls)
-
-        ret = col_results + col_set_resuls
-
+        ret = [(item[0], item[1]) for item in col_query.distinct()]
+        log.debug("COL RESULTS: %s", ret)
         return ret
 
     def __validate_geo_set_compatabilty(
