@@ -372,6 +372,14 @@ def fork_geos_between_namespaces(
     # We are now guaranteed that the missing paths do not have a conflicting
     # geography in the target namespace.
 
+    create_geos_path_hash = source_geo_hash_pairs - target_geo_hash_pairs
+    if not create_geos_path_hash:
+        # Everything already exists in the target (e.g. a re-run against a
+        # layer a previous load forked): forking zero geographies must be a
+        # no-op, not a bulk insert of zero rows.
+        log.debug("Nothing to fork; target already has all source geographies")
+        return []
+
     log.debug("Forking the geos")
 
     if notes == "THERE ARE NO NOTES":
@@ -391,7 +399,7 @@ def fork_geos_between_namespaces(
         db=db,
         source_namespace=source_namespace_obj,
         target_namespace=target_namespace_obj,
-        create_geos_path_hash=source_geo_hash_pairs - target_geo_hash_pairs,
+        create_geos_path_hash=create_geos_path_hash,
         geo_import=geo_import,
         obj_meta=meta_obj,
     )

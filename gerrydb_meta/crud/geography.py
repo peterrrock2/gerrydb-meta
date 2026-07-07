@@ -325,6 +325,10 @@ class CRGeography(NamespacedCRBase[models.Geography, None]):
         obj_meta: models.ObjectMeta,
         namespace: models.Namespace,
     ) -> dict[str, models.Geography]:
+        # An empty parameter list degenerates to INSERT ... DEFAULT VALUES,
+        # which violates the NOT NULL constraints; there is nothing to insert.
+        if not insert_paths:
+            return {}
         return {
             geo.path: geo
             for geo in list(

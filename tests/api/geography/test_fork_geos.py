@@ -397,6 +397,25 @@ def test_full_fork(ctx_no_scopes, caplog, me_2010_gdf):
         assert geo.path in new_me_2010_gdf.index
         assert str(geo.versions[0].geo_bin.geography) == Polygon().wkb.hex()
 
+    # Re-forking when the target already has every source geography must be
+    # a no-op returning no forked paths, not a zero-row bulk insert
+    # (regression: INSERT ... DEFAULT VALUES violating NOT NULL on path).
+    assert (
+        fork_geos_between_namespaces(
+            target_namespace=ns2.path,
+            loc_ref="maf",
+            target_layer=geo_layer2.path,
+            db=db,
+            user=user,
+            scopes=get_scopes(user),
+            source_namespace=ns.path,
+            source_layer=geo_layer.path,
+            allow_extra_source_geos=True,
+            allow_empty_polys=True,
+        )
+        == []
+    )
+
 
 def test_full_fork_lingering_errors(ctx_no_scopes, caplog, me_2010_gdf):
     db = ctx_no_scopes.db
