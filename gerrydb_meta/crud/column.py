@@ -499,6 +499,183 @@ class CRColumn(NamespacedCRBase[models.DataColumn, schemas.ColumnCreate]):
         db.flush()
         return ref, etag
 
+    def materialize(
+        self,
+        db: Session,
+        *,
+        ref: models.ColumnRef,
+        obj_meta: models.ObjectMeta,
+    ) -> Tuple[models.DataColumn, uuid.UUID]:
+        """Materializes a cross-namespace reference into an owned column.
+
+        Creates a column in the ref's namespace (the ref becomes its
+        canonical ref, mirroring create()'s ref-first order), copies the
+        source's current values onto same-path geographies, seeds stats by
+        refolding the stored rows, and repoints every ref in the namespace
+        that targeted the source. Template versions pin col_ids at creation,
+        so existing templates and views keep resolving the source.
+        """
+        source = ref.column
+        namespace = ref.namespace
+        if source is None:
+            raise CreateValueError("Reference does not resolve to a column.")
+        if source.namespace_id == namespace.namespace_id:
+            raise CreateValueError(
+                "Only cross-namespace references can be materialized; "
+                "same-namespace references are aliases of an owned column."
+            )
+
+        col = models.DataColumn(
+            canonical_ref_id=ref.ref_id,
+            namespace_id=namespace.namespace_id,
+            meta_id=obj_meta.meta_id,
+            description=source.description,
+            source_url=source.source_url,
+            kind=source.kind,
+            type=source.type,
+        )
+        db.add(col)
+        db.flush()
+
+        # Partition DDL on an autocommit connection so no parent lock spans
+        # the value copy (in-session DDL would hold ACCESS EXCLUSIVE on the
+        # parent until commit, blocking every column_value reader for the
+        # copy's duration). CREATE-then-ATTACH instead of CREATE ... PARTITION
+        # OF: attaching takes SHARE UPDATE EXCLUSIVE, which does not conflict
+        # with concurrent readers/writers. A crash between the two statements
+        # strands an empty detached table, identifiable and sweepable.
+        # One exception: if THIS session's open transaction already locks the
+        # parent (it created a column earlier in the same transaction), a
+        # second connection's DDL would wait on us forever; the parent lock
+        # is already ours then, so in-session DDL is both safe and required.
+        table = f"{models.SCHEMA}.{models.ColumnValue.__table__.name}"
+        part = f"{table}_{col.col_id}"
+        holds_parent_lock = db.execute(
+            text(
+                "SELECT 1 FROM pg_locks "
+                f"WHERE relation = '{table}'::regclass AND pid = pg_backend_pid()"
+            )
+        ).first()
+        if holds_parent_lock:
+            db.execute(create_column_value_partition_text(column_id=col.col_id))
+        else:
+            with db.get_bind().connect().execution_options(
+                isolation_level="AUTOCOMMIT"
+            ) as ddl_conn:
+                ddl_conn.execute(
+                    text(
+                        f"CREATE TABLE IF NOT EXISTS {part} "
+                        f"(LIKE {table} INCLUDING DEFAULTS INCLUDING CONSTRAINTS "
+                        "INCLUDING INDEXES)"
+                    )
+                )
+                ddl_conn.execute(
+                    text(
+                        f"ALTER TABLE {table} ATTACH PARTITION {part} "
+                        f"FOR VALUES IN ({int(col.col_id)})"
+                    )
+                )
+
+        with db.begin(nested=True):
+            # Literal col_ids so the planner prunes both partitions.
+            db.execute(
+                text(
+                    f"INSERT INTO {part} "
+                    "(col_id, geo_id, meta_id, valid_from, "
+                    " val_float, val_int, val_str, val_bool) "
+                    f"SELECT {int(col.col_id)}, g_tgt.geo_id, :meta_id, now(), "
+                    "       cv.val_float, cv.val_int, cv.val_str, cv.val_bool "
+                    f"FROM {models.SCHEMA}.column_value cv "
+                    f"JOIN {models.SCHEMA}.geography g_src ON g_src.geo_id = cv.geo_id "
+                    f"JOIN {models.SCHEMA}.geography g_tgt ON g_tgt.path = g_src.path "
+                    "  AND g_tgt.namespace_id = :target_ns "
+                    f"WHERE cv.col_id = {int(source.col_id)} AND cv.valid_to IS NULL "
+                    "  AND g_src.namespace_id = :source_ns"
+                ),
+                {
+                    "meta_id": obj_meta.meta_id,
+                    "target_ns": namespace.namespace_id,
+                    "source_ns": source.namespace_id,
+                },
+            )
+            # Refold stats from the stored rows (never copied from the
+            # source): the fingerprints then match any later rebuild.
+            db.execute(
+                text(
+                    f"INSERT INTO {models.SCHEMA}.column_value_count "
+                    "(col_id, set_version_id, count, value_hash_hi, value_hash_lo) "
+                    + hash_rebuild_select(
+                        f"cv.col_id = {int(col.col_id)} "
+                        "AND m.set_version_id IN ("
+                        f"    SELECT set_version_id FROM {models.SCHEMA}.geo_set_version "
+                        "     WHERE valid_to IS NULL AND namespace_id = :target_ns)"
+                    )
+                ),
+                {"target_ns": namespace.namespace_id},
+            )
+            # After divergence, every path in this namespace that meant the
+            # source column now means the owned one; refs elsewhere are
+            # untouched.
+            db.execute(
+                text(
+                    f"UPDATE {models.SCHEMA}.column_ref "
+                    "SET col_id = :new_col WHERE namespace_id = :target_ns "
+                    "AND col_id = :src_col"
+                ),
+                {
+                    "new_col": col.col_id,
+                    "target_ns": namespace.namespace_id,
+                    "src_col": source.col_id,
+                },
+            )
+            etag = self._update_etag(db, namespace)
+        db.expire(ref)
+        db.expire(col, ["refs"])
+        return col, etag
+
+    def missing_value_paths(
+        self,
+        db: Session,
+        *,
+        col: models.DataColumn,
+        namespace: models.Namespace,
+        limit: int = 10,
+    ) -> list[str]:
+        """Geography paths carrying a current value for `col` whose path has
+        no geography in `namespace` (a sample, up to `limit`)."""
+        rows = db.execute(
+            text(
+                f"SELECT DISTINCT g_src.path FROM {models.SCHEMA}.column_value cv "
+                f"JOIN {models.SCHEMA}.geography g_src ON g_src.geo_id = cv.geo_id "
+                # Literal col_id so the planner prunes to the column's partition.
+                f"WHERE cv.col_id = {int(col.col_id)} AND cv.valid_to IS NULL "
+                "AND g_src.namespace_id = :source_ns "
+                f"AND NOT EXISTS (SELECT 1 FROM {models.SCHEMA}.geography g_tgt "
+                "WHERE g_tgt.path = g_src.path AND g_tgt.namespace_id = :target_ns) "
+                "LIMIT :lim"
+            ),
+            {
+                "source_ns": col.namespace_id,
+                "target_ns": namespace.namespace_id,
+                "lim": limit,
+            },
+        ).all()
+        return [row.path for row in rows]
+
+    def cross_namespace_refs(
+        self, db: Session, *, namespace: models.Namespace
+    ) -> list[models.ColumnRef]:
+        """References in `namespace` that resolve to another namespace's column."""
+        return (
+            db.query(models.ColumnRef)
+            .join(models.DataColumn, models.DataColumn.col_id == models.ColumnRef.col_id)
+            .filter(
+                models.ColumnRef.namespace_id == namespace.namespace_id,
+                models.DataColumn.namespace_id != namespace.namespace_id,
+            )
+            .all()
+        )
+
     def find_duplicate(
         self,
         db: Session,

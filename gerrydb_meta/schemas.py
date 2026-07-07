@@ -260,6 +260,10 @@ class ColumnReferenceCreate(BaseModel):
     path: str
     target_namespace: str
     target_path: str
+    # When true, refuse the reference if the target column carries current
+    # values on geography paths that do not exist in the caller's namespace
+    # (clones of yet-unloaded levels are legitimate, so this is opt-in).
+    validate_paths: bool = False
 
 
 class ColumnValue(BaseModel):
