@@ -1745,3 +1745,171 @@ def test_view_create_clone_ref_pins_and_survives_repoint(db_with_meta):
     resolved_post = _view_columns(db, post_template.template_version_id)
     assert set(resolved_post) == {"population_materialized"}
     assert resolved_post["population_materialized"].col_id == new_col.col_id
+
+
+def test_view_clone_diverge_end_to_end(db_with_meta):
+    """Full clone lifecycle: a view created over a clone serves source values
+    forever; after materialization + divergence, a new view serves the
+    diverged values, and fingerprints differ only where values do."""
+    from sqlalchemy import text as sa_text
+
+    from gerrydb_meta.crud.view import _view_columns
+
+    db, meta = db_with_meta
+
+    src_ns, _ = crud.namespace.create(
+        db=db,
+        obj_in=schemas.NamespaceCreate(path="e2esrc", description="d", public=True),
+        obj_meta=meta,
+    )
+    tgt_ns, _ = crud.namespace.create(
+        db=db,
+        obj_in=schemas.NamespaceCreate(path="e2etgt", description="d", public=True),
+        obj_meta=meta,
+    )
+    loc, _ = crud.locality.create(
+        db=db,
+        obj_in=schemas.LocalityCreate(
+            canonical_path="e2eloc", parent_path=None, name="E2E", aliases=None
+        ),
+        obj_meta=meta,
+    )
+    geos_by_ns = {}
+    layers_by_ns = {}
+    for namespace in (src_ns, tgt_ns):
+        geo_import, _ = crud.geo_import.create(db=db, obj_meta=meta, namespace=namespace)
+        geos, _ = crud.geography.create_bulk(
+            db=db,
+            objs_in=[
+                schemas.GeographyCreate(path=f"e{i}", geography=None, internal_point=None)
+                for i in range(2)
+            ],
+            obj_meta=meta,
+            geo_import=geo_import,
+            namespace=namespace,
+        )
+        layer, _ = crud.geo_layer.create(
+            db=db,
+            obj_in=schemas.GeoLayerCreate(path="e2elayer", description="d"),
+            obj_meta=meta,
+            namespace=namespace,
+        )
+        crud.geo_layer.map_locality(
+            db=db, layer=layer, locality=loc, geographies=[g[0] for g in geos], obj_meta=meta
+        )
+        geos_by_ns[namespace.path] = [g[0] for g in geos]
+        layers_by_ns[namespace.path] = layer
+
+    pop_col, _ = crud.column.create(
+        db=db,
+        obj_in=schemas.ColumnCreate(
+            canonical_path="pop", description="d", kind=ColumnKind.COUNT, type=ColumnType.INT
+        ),
+        obj_meta=meta,
+        namespace=src_ns,
+    )
+    crud.column.set_values(
+        db=db,
+        col=pop_col,
+        values=[(g, 100 + i) for i, g in enumerate(geos_by_ns["e2esrc"])],
+        obj_meta=meta,
+    )
+
+    clone_ref, _ = crud.column.create_reference(
+        db, path="pop", namespace=tgt_ns, col=pop_col, obj_meta=meta
+    )
+    template_v1, _ = crud.view_template.create(
+        db=db,
+        obj_in=schemas.ViewTemplateCreate(
+            path="e2e_template", description="d", members=["pop"]
+        ),
+        resolved_members=[clone_ref],
+        obj_meta=meta,
+        namespace=tgt_ns,
+    )
+    view1, _ = crud.view.create(
+        db=db,
+        obj_in=schemas.ViewCreate(
+            path="e2e_view_v1",
+            description="pre-divergence",
+            template="e2e_template",
+            locality="e2eloc",
+            layer="e2elayer",
+        ),
+        obj_meta=meta,
+        namespace=tgt_ns,
+        template=template_v1,
+        locality=loc,
+        layer=layers_by_ns["e2etgt"],
+    )
+    assert view1.num_geos == 2
+
+    def current_values(col_id: int) -> dict[str, int]:
+        rows = db.execute(
+            sa_text(
+                "SELECT g.path, cv.val_int FROM gerrydb.column_value cv "
+                "JOIN gerrydb.geography g ON g.geo_id = cv.geo_id "
+                f"WHERE cv.col_id = {col_id} AND cv.valid_to IS NULL"
+            )
+        ).all()
+        return {r.path: r.val_int for r in rows}
+
+    v1_col = _view_columns(db, view1.template_version_id)["pop"]
+    assert v1_col.col_id == pop_col.col_id
+    assert current_values(v1_col.col_id) == {"e0": 100, "e1": 101}
+
+    # Diverge: materialize the clone, then change one value locally.
+    owned_col, _ = crud.column.materialize(db, ref=clone_ref, obj_meta=meta)
+    crud.column.set_values(
+        db=db,
+        col=owned_col,
+        values=[(geos_by_ns["e2etgt"][0], 999)],
+        obj_meta=meta,
+    )
+
+    template_v2, _ = crud.view_template.create(
+        db=db,
+        obj_in=schemas.ViewTemplateCreate(
+            path="e2e_template_v2", description="d", members=["pop"]
+        ),
+        resolved_members=[clone_ref],
+        obj_meta=meta,
+        namespace=tgt_ns,
+    )
+    view2, _ = crud.view.create(
+        db=db,
+        obj_in=schemas.ViewCreate(
+            path="e2e_view_v2",
+            description="post-divergence",
+            template="e2e_template_v2",
+            locality="e2eloc",
+            layer="e2elayer",
+        ),
+        obj_meta=meta,
+        namespace=tgt_ns,
+        template=template_v2,
+        locality=loc,
+        layer=layers_by_ns["e2etgt"],
+    )
+
+    # The old view still pins and serves the source; the new one serves the
+    # diverged values.
+    assert _view_columns(db, view1.template_version_id)["pop"].col_id == pop_col.col_id
+    assert current_values(pop_col.col_id) == {"e0": 100, "e1": 101}
+    v2_col = _view_columns(db, view2.template_version_id)["pop"]
+    assert v2_col.col_id == owned_col.col_id
+    assert current_values(owned_col.col_id) == {"e0": 999, "e1": 101}
+
+    # Fingerprints: identical before the divergent write would have matched;
+    # after it, the two columns' stats differ.
+    src_stats = (
+        db.query(models.ColumnValueCount).filter_by(col_id=pop_col.col_id).one()
+    )
+    tgt_stats = (
+        db.query(models.ColumnValueCount).filter_by(col_id=owned_col.col_id).one()
+    )
+    assert src_stats.count == tgt_stats.count == 2
+    assert (src_stats.value_hash_hi, src_stats.value_hash_lo) != (
+        tgt_stats.value_hash_hi,
+        tgt_stats.value_hash_lo,
+    )

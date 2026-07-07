@@ -177,3 +177,150 @@ def test_api_column_patch__through_reference_forbidden(ctx_public_namespace_read
     )
     assert response.status_code == HTTPStatus.FORBIDDEN, response.json()
     assert "reference" in response.json()["detail"]
+
+
+def test_api_column_list_include_references(ctx_public_namespace_read_write):
+    """Un-materialized clones appear in listings only with the flag, labeled
+    by their local path with the resolved column's metadata."""
+    from gerrydb_meta import crud
+
+    ctx = ctx_public_namespace_read_write
+    db, meta, ns_obj = ctx.db, ctx.meta or ctx.admin_meta, ctx.namespace
+
+    src_ns, _ = crud.namespace.create(
+        db=db,
+        obj_in=schemas.NamespaceCreate(path="refsrc", description="t", public=True),
+        obj_meta=meta,
+    )
+    src_col, _ = crud.column.create(
+        db=db,
+        obj_in=schemas.ColumnCreate(
+            canonical_path="pop",
+            description="source population",
+            kind=ColumnKind.COUNT,
+            type=ColumnType.INT,
+        ),
+        obj_meta=meta,
+        namespace=src_ns,
+    )
+    crud.column.create_reference(
+        db, path="borrowed_pop", namespace=ns_obj, col=src_col, obj_meta=meta
+    )
+    db.flush()
+
+    plain = ctx.client.get(f"{COLUMNS_ROOT}/{ns_obj.path}")
+    assert plain.status_code == HTTPStatus.OK
+    assert "borrowed_pop" not in {c["canonical_path"] for c in plain.json()}
+
+    flagged = ctx.client.get(f"{COLUMNS_ROOT}/{ns_obj.path}?include_references=true")
+    assert flagged.status_code == HTTPStatus.OK
+    by_path = {c["canonical_path"]: c for c in flagged.json()}
+    assert "borrowed_pop" in by_path
+    clone = by_path["borrowed_pop"]
+    assert clone["namespace"] == ns_obj.path
+    assert clone["description"] == "source population"
+    assert clone["kind"] == "count"
+
+
+def test_api_column_reference_validate_paths(ctx_public_namespace_read_write):
+    """validate_paths refuses a clone whose source values cover paths the
+    target namespace lacks; the default permits it."""
+    from gerrydb_meta import crud
+
+    ctx = ctx_public_namespace_read_write
+    db, meta, ns_obj = ctx.db, ctx.meta or ctx.admin_meta, ctx.namespace
+
+    src_ns, _ = crud.namespace.create(
+        db=db,
+        obj_in=schemas.NamespaceCreate(path="valsrc", description="t", public=True),
+        obj_meta=meta,
+    )
+    geo_import, _ = crud.geo_import.create(db=db, obj_meta=meta, namespace=src_ns)
+    geos, _ = crud.geography.create_bulk(
+        db=db,
+        objs_in=[
+            schemas.GeographyCreate(path=f"vg{i}", geography=None, internal_point=None)
+            for i in range(2)
+        ],
+        obj_meta=meta,
+        geo_import=geo_import,
+        namespace=src_ns,
+    )
+    src_col, _ = crud.column.create(
+        db=db,
+        obj_in=schemas.ColumnCreate(
+            canonical_path="valpop",
+            description="t",
+            kind=ColumnKind.COUNT,
+            type=ColumnType.INT,
+        ),
+        obj_meta=meta,
+        namespace=src_ns,
+    )
+    crud.column.set_values(
+        db=db,
+        col=src_col,
+        values=[(g[0], i) for i, g in enumerate(geos)],
+        obj_meta=meta,
+    )
+    db.flush()
+
+    body = {
+        "path": "valpop_clone",
+        "target_namespace": src_ns.path,
+        "target_path": "valpop",
+        "validate_paths": True,
+    }
+    refused = ctx.client.post(f"/api/v1/column-refs/{ns_obj.path}", json=body)
+    assert refused.status_code == HTTPStatus.CONFLICT
+    assert "missing" in refused.json()["detail"]
+
+    body["validate_paths"] = False
+    allowed = ctx.client.post(f"/api/v1/column-refs/{ns_obj.path}", json=body)
+    assert allowed.status_code == HTTPStatus.CREATED, allowed.json()
+
+
+def test_api_column_materialize(ctx_public_namespace_read_write):
+    """Route glue: materialize returns the owned column; same-namespace
+    aliases and unknown paths refuse."""
+    from gerrydb_meta import crud
+
+    ctx = ctx_public_namespace_read_write
+    db, meta, ns_obj = ctx.db, ctx.meta or ctx.admin_meta, ctx.namespace
+
+    src_ns, _ = crud.namespace.create(
+        db=db,
+        obj_in=schemas.NamespaceCreate(path="matapi", description="t", public=True),
+        obj_meta=meta,
+    )
+    src_col, _ = crud.column.create(
+        db=db,
+        obj_in=schemas.ColumnCreate(
+            canonical_path="matpop",
+            description="source population",
+            kind=ColumnKind.COUNT,
+            type=ColumnType.INT,
+        ),
+        obj_meta=meta,
+        namespace=src_ns,
+    )
+    crud.column.create_reference(
+        db, path="borrowed_matpop", namespace=ns_obj, col=src_col, obj_meta=meta
+    )
+    db.flush()
+
+    response = ctx.client.post(
+        f"{COLUMNS_ROOT}/{ns_obj.path}/borrowed_matpop/materialize"
+    )
+    assert response.status_code == HTTPStatus.OK, response.json()
+    body = schemas.Column(**response.json())
+    assert body.canonical_path == "borrowed_matpop"
+    assert body.namespace == ns_obj.path
+    assert body.kind == ColumnKind.COUNT
+
+    # The path now names an owned column, not a cross-namespace ref.
+    again = ctx.client.post(f"{COLUMNS_ROOT}/{ns_obj.path}/borrowed_matpop/materialize")
+    assert again.status_code == HTTPStatus.CONFLICT
+
+    missing = ctx.client.post(f"{COLUMNS_ROOT}/{ns_obj.path}/nope/materialize")
+    assert missing.status_code == HTTPStatus.NOT_FOUND
